@@ -1,6 +1,50 @@
 # GoodiBot modular feature module
 from core import *
 
+
+def _resolve_whisper_username_from_db(db: dict, username: str) -> tuple[int | None, str, str]:
+    """Resolve a Telegram username to a numeric user ID from users the bot knows.
+
+    Bot API get_chat(@username) is not a reliable user lookup (it is mainly for
+    chats/channels). We therefore resolve against the bot's persistent member
+    index and recent/group management indexes, then persist only the numeric ID.
+    """
+    uname = (username or "").lstrip("@").strip().lower()
+    if not uname:
+        return None, "", ""
+
+    candidates = []
+    for uid, info in (db.get("members", {}) or {}).items():
+        candidates.append((uid, info or {}))
+    for _, recent in (db.get("recent_active_users", {}) or {}).items():
+        if isinstance(recent, dict):
+            recent = list(recent.items())
+        for uid, info in recent or []:
+            candidates.append((uid, info or {}))
+    for _, g_data in (db.get("groups", {}) or {}).items():
+        g_data = g_data or {}
+        for role in ("owners", "admins", "special", "exempt"):
+            for uid in (g_data.get("management", {}) or {}).get(role, []) or []:
+                info = (db.get("members", {}) or {}).get(str(uid), {}) or {}
+                candidates.append((uid, info))
+        for store_name in ("warnings", "muted_users", "banned_users"):
+            for uid, info in (g_data.get(store_name, {}) or {}).items():
+                candidates.append((uid, info or {}))
+
+    seen = set()
+    for uid, info in candidates:
+        uid_key = str(uid)
+        if uid_key in seen:
+            continue
+        seen.add(uid_key)
+        stored_uname = str(info.get("username", "") or "").lstrip("@").lower()
+        if stored_uname == uname:
+            try:
+                return int(uid), info.get("fullname", "کاربر") or "کاربر", info.get("username", "") or uname
+            except (TypeError, ValueError):
+                continue
+    return None, "", ""
+
 async def handle_inline_whisper(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query_obj = update.inline_query
     logger.info(f"Received Inline Query from {query_obj.from_user.id}: '{query_obj.query}'")
@@ -63,22 +107,22 @@ async def handle_inline_whisper(update: Update, context: ContextTypes.DEFAULT_TY
             target_uid = None
     elif re.fullmatch(r"[A-Za-z0-9_]{5,32}", clean_target):
         target_uname = clean_target.lower()
-        # یوزرنیم فقط برای پیدا کردن کاربر استفاده می‌شود؛ بعد از resolve،
-        # ID عددی ذخیره می‌شود تا تغییر username نجوا را خراب نکند.
-        try:
-            target_chat = await context.bot.get_chat(f"@{target_uname}")
-            if getattr(target_chat, "id", None):
-                target_uid = int(target_chat.id)
-                target_uname = target_chat.username or target_uname
-        except Exception:
+        # Resolve the username to a numeric ID from the bot's persistent user
+        # index. The username is only an input alias; the whisper itself is
+        # always addressed/read by target_uid.
+        db = load_db()
+        target_uid, target_name, resolved_uname = _resolve_whisper_username_from_db(db, target_uname)
+        if target_uid:
+            target_uname = resolved_uname or target_uname
+        else:
             results = [
                 InlineQueryResultArticle(
                     id="whisper_bad_target",
                     title=" گیرنده یافت نشد!!",
-                    description="یوزرنیم را دوباره بررسی کنید.",
+                    description="یوزرنیم را دوباره بررسی کنید یا ابتدا کاربر در گروه با ربات تعامل داشته باشد.",
                     input_message_content=InputTextMessageContent(
                         '<tg-emoji emoji-id="5819154526816444042">❌</tg-emoji> <b>گیرنده یافت نشد!!</b>\n'
-                        '<b>- یوزرنیم گیرنده را دوباره بررسی کنید.</b>',
+                        '<b>- این یوزرنیم هنوز در اطلاعات ربات ثبت نشده است.</b>',
                         parse_mode=ParseMode.HTML
                     )
                 )
