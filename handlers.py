@@ -424,7 +424,26 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     db.setdefault("members", {})[str(uid)] = {"username": uname, "fullname": name}
                     mark_db_dirty(); save_db(force=True)
 
+                    # A promoted user must not remain muted. If the target is currently
+                    # in the bot's mute list, restore normal group permissions immediately
+                    # after assigning the new management role. Keep the mute record if
+                    # Telegram refuses the unmute, so we never pretend it was removed.
                     extra = ""
+                    if str(uid) in (g_data.get("muted_users", {}) or {}):
+                        if await bot_can_restrict_members(context, chat_id):
+                            try:
+                                await context.bot.restrict_chat_member(
+                                    chat_id,
+                                    uid,
+                                    permissions=full_group_permissions()
+                                )
+                                g_data.setdefault("muted_users", {}).pop(str(uid), None)
+                                mark_db_dirty(); save_db(force=True)
+                            except Exception:
+                                extra += f'\n- کاربر از نظر ربات {label} شد، اما رفع سکوت توسط تلگرام انجام نشد. <tg-emoji emoji-id="{PREMIUM_CANCEL_EMOJI}">❌</tg-emoji>'
+                        else:
+                            extra += f'\n- کاربر از نظر ربات {label} شد، اما ربات دسترسی رفع سکوت را ندارد. <tg-emoji emoji-id="{PREMIUM_CANCEL_EMOJI}">❌</tg-emoji>'
+
                     if role == "admins":
                         if await bot_can_promote_members(context, chat_id):
                             try:
@@ -440,9 +459,9 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                     is_anonymous=False
                                 )
                             except Exception:
-                                extra = f'\n- اما ربات دسترسی به ادمین کردن گروه نداشت و شخص فقط در ربات ادمین شد! <tg-emoji emoji-id="{PREMIUM_CANCEL_EMOJI}">❌</tg-emoji>'
+                                extra += f'\n- اما ربات دسترسی به ادمین کردن گروه نداشت و شخص فقط در ربات ادمین شد! <tg-emoji emoji-id="{PREMIUM_CANCEL_EMOJI}">❌</tg-emoji>'
                         else:
-                            extra = f'\n- اما ربات دسترسی به ادمین کردن گروه نداشت و شخص فقط در ربات ادمین شد! <tg-emoji emoji-id="{PREMIUM_CANCEL_EMOJI}">❌</tg-emoji>'
+                            extra += f'\n- اما ربات دسترسی به ادمین کردن گروه نداشت و شخص فقط در ربات ادمین شد! <tg-emoji emoji-id="{PREMIUM_CANCEL_EMOJI}">❌</tg-emoji>'
 
                     await update.message.reply_text(
                         f'<b><tg-emoji emoji-id="{PREMIUM_MANAGER_EMOJI}">⚡️</tg-emoji> › {get_user_mention(uid, name)}\n\n'
