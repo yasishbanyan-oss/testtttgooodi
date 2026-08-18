@@ -418,6 +418,15 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
 
         g_data = get_group_data(db, cid)
         locks = g_data.setdefault("locks", get_default_locks_structure())
+        if not locks.get(lock_key, False):
+            try:
+                bot_member = await context.bot.get_chat_member(cid, context.bot.id)
+                if bot_member.status not in (ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER):
+                    await query.answer(" ربات ادمین گروه نیست.", show_alert=True)
+                    return
+            except Exception:
+                await query.answer(" ربات ادمین گروه نیست.", show_alert=True)
+                return
         locks[lock_key] = not locks.get(lock_key, False)
         
         status_word = "فعال" if locks[lock_key] else "غیرفعال"
@@ -444,6 +453,15 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
 
         g_data = get_group_data(db, cid)
         locks = g_data.setdefault("locks", get_default_locks_structure())
+        if not locks.get(lock_key, False):
+            try:
+                bot_member = await context.bot.get_chat_member(cid, context.bot.id)
+                if bot_member.status not in (ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER):
+                    await query.answer(" ربات ادمین گروه نیست.", show_alert=True)
+                    return
+            except Exception:
+                await query.answer(" ربات ادمین گروه نیست.", show_alert=True)
+                return
         locks[lock_key] = not locks.get(lock_key, False)
         
         status_word = "فعال" if locks[lock_key] else "غیرفعال"
@@ -1816,6 +1834,23 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             await query.message.edit_text(new_text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
         except Exception:
             pass
+        return
+
+    # OWNER LEF MEDIA SETUP
+    elif data == "owner_lef_media":
+        if int(user_id) != int(OWNER_ID):
+            await query.answer(" دسترسی غیرمجاز! فقط مالک کل.", show_alert=True)
+            return
+        db["states"]["waiting_lef_media"][str(user_id)] = current_chat_id
+        mark_db_dirty()
+        save_db()
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton(" لغو", callback_data="cancel_current_flow", style="danger")]])
+        await query.message.edit_text(
+            "<b>تنظیم رسانه لف</b>\n\nهر رسانه‌ای که می‌خواهید پاسخ لف باشد ارسال کنید؛ استیکر، گیف، ویدیو، عکس، صدا، فایل یا متن.\n"
+            "رسانه قبلی با مورد جدید جایگزین می‌شود.",
+            reply_markup=kb,
+            parse_mode=ParseMode.HTML
+        )
         return
 
     # OWNER MAIN PANEL ACTIONS
