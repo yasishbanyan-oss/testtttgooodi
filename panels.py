@@ -26,6 +26,7 @@ def get_owner_panel_content(db: dict) -> tuple[str, InlineKeyboardMarkup]:
             InlineKeyboardButton(" شعارهای سراسری", callback_data="owner_list_poems", style="primary"),
             InlineKeyboardButton(" غذاهای سراسری", callback_data="owner_list_foods", style="primary")
         ],
+        [InlineKeyboardButton(" تنظیم رسانه لف", callback_data="owner_lef_media", style="primary")],
         [
             InlineKeyboardButton(" افزودن شعر جدید", callback_data="owner_add_poem", style="success"),
             InlineKeyboardButton(" افزودن غذا", callback_data="owner_add_food", style="success")
