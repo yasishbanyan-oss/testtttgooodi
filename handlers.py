@@ -82,6 +82,10 @@ async def command_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     states = db.get("states", {})
     done_anything = False
 
+    # /done also finishes the filter-word entry flow.
+    if await filter_done(update, context):
+        return
+
     if user_id in states.get("waiting_poem_names", {}):
         cid = states["waiting_poem_names"][user_id]
         del states["waiting_poem_names"][user_id]
@@ -1476,7 +1480,13 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(" <b>سیستم کامنت اتوماتیک برای این گروه فعال شد.</b>", parse_mode=ParseMode.HTML)
             return
 
-        if is_group and clean_raw in ["پنل", "admin", "/admin"] and await is_configured_group_manager(context, chat_id, user_id):
+        if is_group and clean_raw in ["پنل", "admin", "/admin"]:
+            if not await is_configured_group_manager(context, chat_id, user_id):
+                await update.message.reply_text(
+                    f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> شما دسترسی مدیریت این گروه را ندارید.</b>',
+                    parse_mode=ParseMode.HTML
+                )
+                return
             await command_admin_panel(update, context)
             return
 
