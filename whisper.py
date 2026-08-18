@@ -63,6 +63,28 @@ async def handle_inline_whisper(update: Update, context: ContextTypes.DEFAULT_TY
             target_uid = None
     elif re.fullmatch(r"[A-Za-z0-9_]{5,32}", clean_target):
         target_uname = clean_target.lower()
+        # یوزرنیم فقط برای پیدا کردن کاربر استفاده می‌شود؛ بعد از resolve،
+        # ID عددی ذخیره می‌شود تا تغییر username نجوا را خراب نکند.
+        try:
+            target_chat = await context.bot.get_chat(f"@{target_uname}")
+            if getattr(target_chat, "id", None):
+                target_uid = int(target_chat.id)
+                target_uname = target_chat.username or target_uname
+        except Exception:
+            results = [
+                InlineQueryResultArticle(
+                    id="whisper_bad_target",
+                    title=" گیرنده یافت نشد!!",
+                    description="یوزرنیم را دوباره بررسی کنید.",
+                    input_message_content=InputTextMessageContent(
+                        '<tg-emoji emoji-id="5819154526816444042">❌</tg-emoji> <b>گیرنده یافت نشد!!</b>\n'
+                        '<b>- یوزرنیم گیرنده را دوباره بررسی کنید.</b>',
+                        parse_mode=ParseMode.HTML
+                    )
+                )
+            ]
+            await update.inline_query.answer(results, cache_time=0, is_personal=True)
+            return
     else:
         results = [
             InlineQueryResultArticle(
