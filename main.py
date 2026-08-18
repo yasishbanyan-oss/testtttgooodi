@@ -1,9 +1,9 @@
 # GoodiBot entry point
 import core
 import services, permissions, moderation, management, welcome, comments, jobs, links
-import panels, games, whisper, callbacks, handlers, support, help, fun
+import panels, games, whisper, callbacks, handlers, support, help, fun, filter_handler
 
-registry = core.bind_all_modules([services, permissions, moderation, management, welcome, comments, jobs, links, panels, games, whisper, callbacks, handlers, support, help, fun])
+registry = core.bind_all_modules([services, permissions, moderation, management, welcome, comments, jobs, links, panels, games, whisper, callbacks, handlers, support, help, fun, filter_handler])
 globals().update(registry)
 from core import *
 
@@ -33,6 +33,7 @@ def main():
     app.add_handler(CommandHandler("panel", command_owner_panel))
     app.add_handler(CommandHandler("cancel", command_cancel))
     app.add_handler(CommandHandler("done", command_done))
+    app.add_handler(MessageHandler(filters.ChatType.GROUPS & filters.ALL, handle_filter_messages), group=-3)
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), dwoz_message_handler), group=-1)
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_goodi_support_message), group=-1)
     app.add_handler(MessageHandler(filters.ALL & (~filters.COMMAND), handle_messages))
