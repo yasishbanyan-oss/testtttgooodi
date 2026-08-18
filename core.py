@@ -90,7 +90,7 @@ async def _premium_send_message(self, *args, **kwargs):
 
 Bot.send_message = _premium_send_message
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8387598614:AAHpV5gOkCyAIdmEASYVm1l0E8yOCHCwdTk")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8618205537:AAFZSom3Z86dnOqn95hdSRZTIDk8NaNIfdg")
 
 OWNER_ID = int(os.getenv("OWNER_ID", "6749949992"))
 
