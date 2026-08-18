@@ -142,6 +142,17 @@ async def handle_welcome_text_command(update: Update, context: ContextTypes.DEFA
     db = load_db()
     g_data = get_group_data(db, chat_id)
     w_set = g_data.setdefault("welcome", {"enabled": True, "custom": False})
+    was_enabled = bool(w_set.get("enabled", True))
+
+    # اگر وضعیت درخواستی از قبل همان بوده، فقط همان وضعیت را اعلام کن و دوباره ذخیره نکن.
+    if was_enabled == turn_on:
+        if turn_on:
+            reply_html = f'<b>خوش‌آمدگویی از قبل فعال بود.</b> <tg-emoji emoji-id="{CHECK_CUSTOM_EMOJI_ID}">✅</tg-emoji>'
+        else:
+            reply_html = f'<b>خوش‌آمدگویی از قبل خاموش بود.</b> <tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji>'
+        await msg.reply_text(reply_html, parse_mode=ParseMode.HTML)
+        raise ApplicationHandlerStop()
+
     w_set["enabled"] = turn_on
 
     action_label = "فعال" if turn_on else "غیرفعال"
