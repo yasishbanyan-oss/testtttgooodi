@@ -199,10 +199,10 @@ def run_health_check_server():
     except Exception as e:
         logger.error(f"Health check server error: {e}")
 
-LEF_PATTERN = re.compile(
-    r"(?:\b|(?<=\s))ل+[فف]*[عع]*[هه]*(?:\s*(?:داد|بده|میده|میدم|میخوام))?(?=\s|[.,!?؛؟]|$)",
-    re.IGNORECASE
-)
+# «لف» is intentionally substring-based: «لف»، «لفاف»، «کونلف»، «لفت»
+# and similar forms all count as a LEF trigger. It is used only by the
+# dedicated LEF feature, so it does not turn management commands into triggers.
+LEF_PATTERN = re.compile(r"(?<!\w)\S*لف\S*(?!\w)", re.IGNORECASE)
 
 DODOL_PATTERN = re.compile(
     r"(دولتو|دودولتو|شومبولتو|کیرتو|دولتو|دودولت|دول|شومبول|کیر)\s*(ببینم|نشون بده|نشون بپوش|بده|ببینیم)",
@@ -684,4 +684,3 @@ def bind_all_modules(modules):
     for mod in modules:
         mod.__dict__.update(registry)
     return registry
-
