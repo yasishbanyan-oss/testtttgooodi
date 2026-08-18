@@ -253,6 +253,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # --------------------------------------
         if is_group:
             cmd = normalize_text(raw_text).strip().lower()
+            g_data = get_group_data(db, chat_id)
 
             # Commands that change roles or punish users must never be executed
             # when the command itself is sent as a reply to one of the bot's messages.
@@ -281,7 +282,12 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "پاکسازی لیست مدیران", "پاکسازی اخطار", "پاکسازی لیست اخطار",
                 "پاکسازی سکوت", "پاکسازی لیست سکوت", "پاکسازی بن", "پاکسازی لیست بن",
             )
-            if is_reply_to_bot and any(
+            replied_bot_message_is_moderation_target = False
+            if is_reply_to_bot and update.message.reply_to_message:
+                moderation_map = g_data.get("moderation_message_targets", {}) or {}
+                replied_bot_message_is_moderation_target = str(update.message.reply_to_message.message_id) in moderation_map
+
+            if is_reply_to_bot and not replied_bot_message_is_moderation_target and any(
                 cmd == prefix or cmd.startswith(prefix + " ")
                 for prefix in reply_block_prefixes
             ):
@@ -297,7 +303,6 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await update.message.reply_text(f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> فقط مدیران گروه می‌توانند پیکربندی را انجام دهند.</b>', parse_mode=ParseMode.HTML); return
                 await configure_group_management(update, context, db, chat_id); return
 
-            g_data = get_group_data(db, chat_id)
             management = g_data.get("management", {}) or {}
 
             # Added promotion formats: «ترفیع»، «ترفیع @user»،
@@ -633,8 +638,12 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             )
                         g_data.setdefault("muted_users", {})[str(uid)] = {"username": uname, "fullname": name, "until": until_ts, "created_at": datetime.now().timestamp()}
                         result = f'- به دلیل تکمیل اخطارها، به مدت {hours} ساعت سکوت می‌شوید. <tg-emoji emoji-id="{WARN_TEMP_EMOJI}">🔇</tg-emoji>' 
+                    # سقف اخطار رسید و مجازات با موفقیت اجرا شد؛ شمارنده اخطار این کاربر ریست می‌شود.
+                    g_data.setdefault("warnings", {}).pop(str(uid), None)
                     mark_db_dirty(); save_db(force=True)
-                    await update.message.reply_text(f'<b><tg-emoji emoji-id="{WARN_DONE_EMOJI}">💥</tg-emoji> › کاربر {mention}</b>\n\n<b>›› <tg-emoji emoji-id="{PREMIUM_WARN_COUNT_EMOJI}">😾</tg-emoji> شما [ {count}/{limit} ] اخطار دریافت کردید.</b>\n<b>{result}</b>', parse_mode=ParseMode.HTML)
+                    result_msg = await update.message.reply_text(f'<b><tg-emoji emoji-id="{WARN_DONE_EMOJI}">💥</tg-emoji> › کاربر {mention}</b>\n\n<b>›› <tg-emoji emoji-id="{PREMIUM_WARN_COUNT_EMOJI}">😾</tg-emoji> شما [ {count}/{limit} ] اخطار دریافت کردید.</b>\n<b>{result}</b>', parse_mode=ParseMode.HTML)
+                    g_data.setdefault("moderation_message_targets", {})[str(result_msg.message_id)] = int(uid)
+                    mark_db_dirty(); save_db(force=True)
                 except Exception:
                     await update.message.reply_text(f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> ربات دسترسی اجرای مجازات انتخاب‌شده را ندارد.</b>', parse_mode=ParseMode.HTML)
                 return
@@ -857,6 +866,22 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         current_state = bool(locks.get(lock_key, False))
                         fa_name = ALL_LOCKS[lock_key]["name"]
 
+                        if lock_action:
+                            try:
+                                bot_member = await context.bot.get_chat_member(chat_id, context.bot.id)
+                                if bot_member.status not in (ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER):
+                                    await update.message.reply_text(
+                                        f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> ربات ادمین گروه نیست.</b>',
+                                        parse_mode=ParseMode.HTML
+                                    )
+                                    return
+                            except Exception:
+                                await update.message.reply_text(
+                                    f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> ربات ادمین گروه نیست.</b>',
+                                    parse_mode=ParseMode.HTML
+                                )
+                                return
+
                         if current_state == lock_action:
                             if lock_action:
                                 reply_text = f'قفل {fa_name} از قبل فعال بود. <tg-emoji emoji-id="{CHECK_CUSTOM_EMOJI_ID}">✅</tg-emoji>'
@@ -1067,6 +1092,24 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await send_premium_ban_notification(context.bot, target_cid, is_group=True, duration_str=dur_display, reason_str=reason)
                     await update.message.reply_text(f" <b>گروه <code>{target_cid}</code> با موفقیت بن شد.</b>\nمدت: <b>{dur_display}</b>", parse_mode=ParseMode.HTML)
                     return
+
+            if u_str in db["states"].get("waiting_lef_media", {}):
+                del db["states"]["waiting_lef_media"][u_str]
+                payload = extract_media_payload(update.message)
+                if not payload:
+                    await update.message.reply_text(
+                        f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> این نوع پیام قابل ذخیره برای رسانه لف نیست.</b>',
+                        parse_mode=ParseMode.HTML
+                    )
+                    return
+                db["media_lef"] = payload
+                mark_db_dirty()
+                save_db(force=True)
+                await update.message.reply_text(
+                    '<b>رسانه لف با موفقیت ذخیره شد. از این به بعد پیام‌های لف با همین رسانه روی کاربر ریپلای می‌شوند. </b>',
+                    parse_mode=ParseMode.HTML
+                )
+                return
 
             if u_str in db["states"].get("waiting_fun_named_msg", {}):
                 payload = extract_media_payload(update.message)
@@ -1739,11 +1782,11 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # ACTION REGISTRATION (GROUP ONLY)
         # --------------------------------------
         action_type = None
-        if any(k in clean_raw for k in ["ثبت گوه خوری", "ثبت گوهخوری"]): action_type = "goh_khori"
-        elif any(k in clean_raw for k in ["ثبت کصلیسی", "ثبت کص لیسی"]): action_type = "kos_lisi"
-        elif any(k in clean_raw for k in ["ثبت خایمالی", "ثبت خایه مالی"]): action_type = "khaymali"
-        elif any(k in clean_raw for k in ["ثبت کصخلی", "ثبت کص خلی"]): action_type = "kos_khali"
-        elif any(k in clean_raw for k in ["ثبت جندگی", "ثبت جنده گی"]): action_type = "jendegi"
+        if clean_raw in ["ثبت گوه خوری", "ثبت گوهخوری"]: action_type = "goh_khori"
+        elif clean_raw in ["ثبت کصلیسی", "ثبت کص لیسی", "ثبت کسلیسی", "ثبت کس لیسی"]: action_type = "kos_lisi"
+        elif clean_raw in ["ثبت خایمالی", "ثبت خایه مالی"]: action_type = "khaymali"
+        elif clean_raw in ["ثبت کصخلی", "ثبت کص خلی"]: action_type = "kos_khali"
+        elif clean_raw in ["ثبت جندگی", "ثبت جنده گی"]: action_type = "jendegi"
 
         if action_type:
             if not is_group:
@@ -2191,7 +2234,12 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             g_data = get_group_data(db, chat_id)
             ml = g_data.get("media_lef") or db.get("media_lef")
             if ml:
-                await send_media_payload(context.bot, chat_id, ml)
+                await send_media_payload(
+                    context.bot,
+                    chat_id,
+                    ml,
+                    reply_to_message_id=update.message.message_id
+                )
             return
 
     except Exception:
