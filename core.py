@@ -412,7 +412,8 @@ def get_default_group_structure() -> dict:
         "warning_settings": {"count": 3, "punishment": None, "temp_mute_hours": 1},
         "warnings": {},
         "muted_users": {},
-        "banned_users": {}
+        "banned_users": {},
+        "filter_words": []
     }
 
 def get_default_db_structure() -> dict:
@@ -474,7 +475,11 @@ def get_default_db_structure() -> dict:
             "broadcast_builder": {},
             "waiting_shutdown_msg": {},
             "waiting_check_user": {},
-            "ban_flow": {}
+            "ban_flow": {},
+            "filter_panel": {},
+            "filter_add": {},
+            "filter_delete": {},
+            "filter_cleanup": {}
         }
     }
 
@@ -582,6 +587,9 @@ def get_group_data(db: dict, chat_id: int | str) -> dict:
     else:
         if "user_last_messages" not in groups[cid_str]:
             groups[cid_str]["user_last_messages"] = {}
+        if "filter_words" not in groups[cid_str] or not isinstance(groups[cid_str]["filter_words"], list):
+            groups[cid_str]["filter_words"] = []
+            mark_db_dirty()
         if "locks" not in groups[cid_str] or not isinstance(groups[cid_str]["locks"], dict):
             groups[cid_str]["locks"] = get_default_locks_structure()
             mark_db_dirty()
@@ -684,3 +692,4 @@ def bind_all_modules(modules):
     for mod in modules:
         mod.__dict__.update(registry)
     return registry
+
