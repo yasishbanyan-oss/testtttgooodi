@@ -314,13 +314,12 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             return
         sender_id = w_data["sender_id"]
         target_uid = w_data.get("target_uid")
-        target_uname = w_data.get("target_username")
-
-        u_uname = (query.from_user.username or "").lower()
         u_id = query.from_user.id
 
+        # Whisper ownership is strictly numeric-ID based. Username is only used
+        # when initially resolving the recipient and for display.
         is_sender = (u_id == sender_id)
-        is_target = (target_uid and u_id == target_uid) or (target_uname and u_uname == target_uname)
+        is_target = bool(target_uid and u_id == int(target_uid))
 
         if not is_sender and not is_target:
             await query.answer(" فضولی نکن! این نجوا برای شما نیست.", show_alert=True)
@@ -358,11 +357,9 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 [
                     InlineKeyboardButton(
                         "پاسخ به نجوا",
-                        switch_inline_query_current_chat=(
-                            f"@{w_data['sender_username']} "
-                            if w_data.get('sender_username')
-                            else f"{w_data['sender_id']} "
-                        ),
+                        # Reply by numeric ID so a later username change cannot
+                        # break the reply flow.
+                        switch_inline_query_current_chat=f"{w_data['sender_id']} ",
                         style="success",
                         icon_custom_emoji_id="6084779072750097974"  # ✅
                     ),
