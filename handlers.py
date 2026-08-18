@@ -468,11 +468,14 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         else:
                             extra += f'\n- اما ربات دسترسی به ادمین کردن گروه نداشت و شخص فقط در ربات ادمین شد! <tg-emoji emoji-id="{PREMIUM_CANCEL_EMOJI}">❌</tg-emoji>'
 
-                    await update.message.reply_text(
+                    result_msg = await update.message.reply_text(
                         f'<b><tg-emoji emoji-id="{PREMIUM_MANAGER_EMOJI}">⚡️</tg-emoji> › {get_user_mention(uid, name)}\n\n'
                         f'›› <tg-emoji emoji-id="{PREMIUM_MANAGER_ADD_EMOJI}">💫</tg-emoji> به لیست {label} ربات افزوده شد.{extra}</b>',
                         parse_mode=ParseMode.HTML
-                    ); return
+                    )
+                    g_data.setdefault("moderation_message_targets", {})[str(result_msg.message_id)] = int(uid)
+                    mark_db_dirty(); save_db(force=True)
+                    return
 
             # Added demotion formats: «عزل», «از مدیر دربیا/دربیـار», «از مالک دربیا/دربیـار», etc.
             demotion_text = re.sub(r"[：:]", " ", cmd)
@@ -527,7 +530,10 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             await context.bot.promote_chat_member(chat_id, uid, can_manage_chat=False, can_delete_messages=False, can_restrict_members=False, can_change_info=False, can_invite_users=False, can_pin_messages=False, can_manage_topics=False, is_anonymous=False)
                         except Exception: pass
                     mark_db_dirty(); save_db(force=True)
-                    await update.message.reply_text(f'<b><tg-emoji emoji-id="{PREMIUM_MANAGER_EMOJI}">⚡️</tg-emoji> › {get_user_mention(uid, name)}\n\n›› <tg-emoji emoji-id="{PREMIUM_MANAGER_ADD_EMOJI}">💫</tg-emoji> {label} با موفقیت حذف شد.</b>', parse_mode=ParseMode.HTML); return
+                    result_msg = await update.message.reply_text(f'<b><tg-emoji emoji-id="{PREMIUM_MANAGER_EMOJI}">⚡️</tg-emoji> › {get_user_mention(uid, name)}\n\n›› <tg-emoji emoji-id="{PREMIUM_MANAGER_ADD_EMOJI}">💫</tg-emoji> {label} با موفقیت حذف شد.</b>', parse_mode=ParseMode.HTML)
+                    g_data.setdefault("moderation_message_targets", {})[str(result_msg.message_id)] = int(uid)
+                    mark_db_dirty(); save_db(force=True)
+                    return
 
             list_commands = {
                 "لیست اخطار": "warns", "اخطار گرفتگان": "warns", "گودی لیست اخطار": "warns", "گودی لیست اخطار بده": "warns", "گودی لیست اخطار بفرست": "warns",
@@ -565,16 +571,8 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(f'<b>آیا از پاکسازی کامل لیست {cleanup_name} مطمئن هستید؟</b>', reply_markup=kb, parse_mode=ParseMode.HTML); return
 
             # Warning commands.
-            warn_prefixes = ["اخطار", "هشدار", "warn"]
-            warn_match = next((x for x in warn_prefixes if cmd == x or cmd.startswith(x + " ")), None)
-            warn_target_first = False
-            warn_target_first_value = ""
-            if not warn_match:
-                warn_parts = cmd.split()
-                if len(warn_parts) >= 2 and warn_parts[1] in warn_prefixes:
-                    warn_match = warn_parts[1]
-                    warn_target_first = True
-                    warn_target_first_value = warn_parts[0]
+            warn_aliases = ["اخطار بده", "هشدار بده", "اخطار", "هشدار", "warn"]
+            warn_match = next((x for x in sorted(warn_aliases, key=len, reverse=True) if cmd == x or cmd.startswith(x + " ")), None)
             if warn_match:
                 if not await is_configured_group_manager(context, chat_id, user_id):
                     await update.message.reply_text(f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> شما مدیر گروه نیستید و دسترسی به سیستم اخطار ندارید.</b>', parse_mode=ParseMode.HTML); return
@@ -582,8 +580,6 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if not s.get("punishment"):
                     await update.message.reply_text('<b> شما هنوز مجازاتی برای اخطار مشخص نکردید.</b>\n\n<b> با ارسال دستور پنل و رفتن به بخش تنظیمات پیشرفته مجازات کاربران را مشخص کنید.</b>', parse_mode=ParseMode.HTML); return
                 rest = cmd[len(warn_match):].strip()
-                if warn_target_first:
-                    rest = warn_target_first_value
                 uid, name, uname = await resolve_group_target(update, context, db, chat_id, rest)
                 if not uid:
                     await update.message.reply_text('<b>برای اخطار دادن باید روی کاربر ریپلای کنید یا آیدی/یوزرنیم او را وارد کنید.</b>', parse_mode=ParseMode.HTML); return
@@ -604,7 +600,10 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 mark_db_dirty(); save_db(force=True)
                 mention = get_user_mention(uid, name)
                 if count < limit:
-                    await update.message.reply_text(f'<b><tg-emoji emoji-id="{WARN_USER_EMOJI}">❗️</tg-emoji> › کاربر {mention}</b>\n\n<b>›› شما [ {count}/{limit} ] اخطار دریافت کردید.</b>', parse_mode=ParseMode.HTML); return
+                    result_msg = await update.message.reply_text(f'<b><tg-emoji emoji-id="{WARN_USER_EMOJI}">❗️</tg-emoji> › کاربر {mention}</b>\n\n<b>›› شما [ {count}/{limit} ] اخطار دریافت کردید.</b>', parse_mode=ParseMode.HTML)
+                    g_data.setdefault("moderation_message_targets", {})[str(result_msg.message_id)] = int(uid)
+                    mark_db_dirty(); save_db(force=True)
+                    return
                 # Execute configured punishment at the limit.
                 try:
                     if punishment == "kick":
@@ -674,12 +673,14 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(f'<b><tg-emoji emoji-id="{WARN_DONE_EMOJI}">💥</tg-emoji> › کاربر {get_user_mention(uid,name)}</b>\n\n<b>›› <tg-emoji emoji-id="{PREMIUM_WARN_COUNT_EMOJI}">😻</tg-emoji> تعداد اخطار های شما‌: {count}</b>', parse_mode=ParseMode.HTML); return
 
             # Ban / mute / unban / unmute commands.
-            ban_cmds = ["بن", "ban", "اخراج", "مسدود", "سیک"]
-            mute_cmds = ["سکوت", "میوت", "mute"]
+            ban_cmds = ["بن", "ban", "اخراج", "مسدود", "سیک", "سیک کن", "بن کن", "اخراج کن", "مسدود کن"]
+            mute_cmds = ["سکوت", "میوت", "mute", "سکوت کن", "میوت کن"]
             unban_cmds = ["حذف بن", "آن بن", "unban", "رفع مسدود", "حذف اخراج", "رفع مسدودیت"]
             unmute_cmds = ["unmute", "remove mute", "حذف سکوت", "رفع سکوت"]
 
             def match_prefix(options):
+                # The command keyword must start at the beginning of the message.
+                # This intentionally rejects sentences such as «الو سیک کن» / «بیا بن».
                 return next((x for x in sorted(options, key=len, reverse=True) if cmd == x or cmd.startswith(x + " ")), None)
 
             action = None; matched = None
@@ -688,22 +689,20 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             elif match_prefix(ban_cmds): action, matched = "ban", match_prefix(ban_cmds)
             elif match_prefix(mute_cmds): action, matched = "mute", match_prefix(mute_cmds)
 
-            # Also accept the natural reply syntax used in the chat screenshots:
-            #   «9999 سکوت» / «9999 بن»
-            # and, when not replying, «123456789 سکوت 9999».
-            # Existing «سکوت 9999» / «بن 9999» syntax remains unchanged.
+            # Natural reply syntax «9999 بن» / «9999 سکوت» is accepted only when
+            # the message is actually a reply. Never scan arbitrary sentences for
+            # a management keyword.
             if not action:
                 parts = cmd.split()
-                if len(parts) >= 2 and parts[-1] in mute_cmds + ban_cmds and update.message.reply_to_message:
-                    action = "mute" if parts[-1] in mute_cmds else "ban"
-                    matched = parts[-1]
-                    pre_duration = " ".join(parts[:-1]).strip()
-                elif len(parts) >= 2 and parts[1] in mute_cmds + ban_cmds:
-                    action = "mute" if parts[1] in mute_cmds else "ban"
-                    matched = parts[1]
-                    pre_target = parts[0]
-                    pre_duration = " ".join(parts[2:]).strip()
-                else:
+                if update.message.reply_to_message and len(parts) >= 2 and parts[-1] in mute_cmds + ban_cmds:
+                    # Only a numeric duration/target prefix is allowed here.
+                    prefix_parts = parts[:-1]
+                    if len(prefix_parts) == 1 and fa_to_en_digits(prefix_parts[0]).isdigit():
+                        action = "mute" if parts[-1] in mute_cmds else "ban"
+                        matched = parts[-1]
+                        pre_duration = prefix_parts[0]
+                        pre_target = ""
+                if not action:
                     pre_duration = ""
                     pre_target = ""
             else:
