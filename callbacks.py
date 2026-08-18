@@ -9,6 +9,10 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     db = load_db()
     session_k = get_session_key(user_id, current_chat_id)
 
+    # Filter-word panel callbacks are isolated in filter_handler.py.
+    if await handle_filter_callback(query, context, db):
+        return
+
     # اول از همه بررسی دکمه‌های لینک تا سریعاً واکنش نشان دهند
     if data.startswith("link_panel:"):
         parts = data.split(":", 2)
