@@ -1300,6 +1300,16 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
         return
 
+    elif data.startswith("list_auto_resp:"):
+        cid = int(data.replace("list_auto_resp:", ""))
+        await open_auto_response_panel(query, context, cid, db)
+        return
+
+    elif data.startswith("auto_cleanup:"):
+        _, cid_s, decision = data.split(":", 2)
+        await auto_response_cleanup_callback(query, context, int(cid_s), decision == "yes")
+        return
+
     elif data.startswith("comment_set:"):
         cid = int(data.replace("comment_set:", ""))
         if not await comment_panel_owner(query, context, db, cid):
