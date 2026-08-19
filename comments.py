@@ -121,6 +121,13 @@ async def render_comment_panel(query, context, chat_id, db):
         parse_mode=ParseMode.HTML
     )
     set_comment_panel_session(db, query.from_user.id, chat_id, query.message.message_id)
+    # The panel text itself tells the manager to send the comment immediately.
+    # Put the user into the pending-comment state here so the next message is
+    # captured by handle_pending_comment_message.
+    db.setdefault("states", {}).setdefault("waiting_comment_msg", {})[str(query.from_user.id)] = {
+        "chat_id": int(chat_id), "panel_message_id": int(query.message.message_id)
+    }
+    mark_db_dirty()
     save_db(force=True)
 
 
