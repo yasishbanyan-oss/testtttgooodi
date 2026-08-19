@@ -182,6 +182,20 @@ def extract_media_payload(msg) -> dict | None:
         return {"type": "audio", "file_id": msg.audio.file_id, "caption": caption}
     if msg.document:
         return {"type": "document", "file_id": msg.document.file_id, "caption": caption}
+    if msg.video_note:
+        return {"type": "video_note", "file_id": msg.video_note.file_id}
+    if msg.contact:
+        return {"type": "contact", "phone_number": msg.contact.phone_number, "first_name": msg.contact.first_name,
+                "last_name": msg.contact.last_name or "", "vcard": msg.contact.vcard or ""}
+    if msg.location:
+        return {"type": "location", "latitude": msg.location.latitude, "longitude": msg.location.longitude,
+                "horizontal_accuracy": msg.location.horizontal_accuracy, "live_period": msg.location.live_period,
+                "heading": msg.location.heading, "proximity_alert_radius": msg.location.proximity_alert_radius}
+    if msg.venue:
+        return {"type": "venue", "latitude": msg.venue.location.latitude, "longitude": msg.venue.location.longitude,
+                "title": msg.venue.title, "address": msg.venue.address, "foursquare_id": msg.venue.foursquare_id or "",
+                "foursquare_type": msg.venue.foursquare_type or "", "google_place_id": msg.venue.google_place_id or "",
+                "google_place_type": msg.venue.google_place_type or ""}
     if msg.sticker:
         return {"type": "sticker", "file_id": msg.sticker.file_id}
     return None
@@ -207,6 +221,27 @@ async def send_media_payload(bot, chat_id: int, payload: dict, reply_to_message_
             await bot.send_audio(chat_id=chat_id, audio=fid, caption=cap, parse_mode=ParseMode.HTML, reply_to_message_id=reply_to_message_id)
         elif mtype == "document":
             await bot.send_document(chat_id=chat_id, document=fid, caption=cap, parse_mode=ParseMode.HTML, reply_to_message_id=reply_to_message_id)
+        elif mtype == "video_note":
+            await bot.send_video_note(chat_id=chat_id, video_note=fid, reply_to_message_id=reply_to_message_id)
+        elif mtype == "contact":
+            await bot.send_contact(chat_id=chat_id, phone_number=payload.get("phone_number", ""),
+                                   first_name=payload.get("first_name", ""), last_name=payload.get("last_name", ""),
+                                   vcard=payload.get("vcard", "") or None, reply_to_message_id=reply_to_message_id)
+        elif mtype == "location":
+            kwargs = {}
+            for k in ("horizontal_accuracy", "live_period", "heading", "proximity_alert_radius"):
+                if payload.get(k) is not None: kwargs[k] = payload[k]
+            await bot.send_location(chat_id=chat_id, latitude=payload["latitude"], longitude=payload["longitude"],
+                                    reply_to_message_id=reply_to_message_id, **kwargs)
+        elif mtype == "venue":
+            kwargs = {}
+            if payload.get("foursquare_id"): kwargs["foursquare_id"] = payload["foursquare_id"]
+            if payload.get("foursquare_type"): kwargs["foursquare_type"] = payload["foursquare_type"]
+            if payload.get("google_place_id"): kwargs["google_place_id"] = payload["google_place_id"]
+            if payload.get("google_place_type"): kwargs["google_place_type"] = payload["google_place_type"]
+            await bot.send_venue(chat_id=chat_id, latitude=payload["latitude"], longitude=payload["longitude"],
+                                 title=payload["title"], address=payload["address"],
+                                 reply_to_message_id=reply_to_message_id, **kwargs)
         elif mtype == "sticker":
             await bot.send_sticker(chat_id=chat_id, sticker=fid, reply_to_message_id=reply_to_message_id)
         return True
