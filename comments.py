@@ -116,7 +116,7 @@ async def render_comment_panel(query, context, chat_id, db):
     await query.message.edit_text(
         comment_setup_prompt(),
         reply_markup=InlineKeyboardMarkup([[
-            InlineKeyboardButton("بستن", callback_data=f"comment_set_cancel:{chat_id}", style="danger", icon_custom_emoji_id=COMMENT_CLOSE_EMOJI)
+            InlineKeyboardButton("بازگشت", callback_data=f"comment_panel_back:{chat_id}", style="danger", icon_custom_emoji_id=BACK_CUSTOM_EMOJI_ID)
         ]]),
         parse_mode=ParseMode.HTML
     )
