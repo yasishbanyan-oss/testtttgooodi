@@ -235,6 +235,7 @@ async def save_comment_from_message(update, context, target_cid):
         return False
     payload = extract_media_payload(update.message)
     if not payload:
+        logger.warning("Comment setup message received but no supported payload was extracted: user=%s chat=%s message=%s", user_id, target_cid, getattr(update.message, "message_id", None))
         return False
     db["states"]["waiting_comment_msg"].pop(str(user_id), None)
     g = get_group_data(db, target_cid)
