@@ -1463,21 +1463,48 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
 
         # --------------------------------------
-        # COMMAND 'کامنت روشن' & 'پنل' (GROUP ONLY)
+        # CHANNEL COMMENT COMMANDS (GROUP ONLY)
         # --------------------------------------
-        if is_group and clean_raw in ["کامنت روشن", "گودی کامنت روشن"]:
+        if is_group and is_comment_list_command(clean_raw):
             if not await is_admin_or_owner(context, chat_id, user_id):
                 await update.message.reply_text(
                     f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> فقط مدیران گروه دسترسی به این دستور را دارند.</b>',
-                    parse_mode=ParseMode.HTML
-                )
+                    parse_mode=ParseMode.HTML)
                 return
-            g_data = get_group_data(db, chat_id)
-            c_set = g_data.setdefault("comment", {"enabled": False, "custom": False})
-            c_set["enabled"] = True
-            mark_db_dirty()
+            g = get_group_data(db, chat_id)
+            # Command-created list view is owned by the sender.
+            text = comment_list_text(g)
+            sent = await update.message.reply_text(
+                text,
+                reply_markup=comment_close_keyboard(f"comment_cmd_close:{chat_id}:{user_id}"),
+                parse_mode=ParseMode.HTML)
+            set_comment_panel_session(db, user_id, chat_id, sent.message_id)
             save_db(force=True)
-            await update.message.reply_text(" <b>سیستم کامنت اتوماتیک برای این گروه فعال شد.</b>", parse_mode=ParseMode.HTML)
+            return
+
+        if is_group and is_comment_on_command(clean_raw):
+            await activate_comments(update, context, chat_id, user_id)
+            return
+
+        if is_group and is_comment_off_command(clean_raw):
+            await deactivate_comments(update, context, chat_id, user_id)
+            return
+
+        if is_group and is_comment_delete_command(clean_raw):
+            if not await is_admin_or_owner(context, chat_id, user_id):
+                await update.message.reply_text(
+                    f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> فقط مدیران گروه دسترسی به این دستور را دارند.</b>',
+                    parse_mode=ParseMode.HTML)
+                return
+            # Use a command-owned confirmation message, not the lists panel.
+            sent = await update.message.reply_text(
+                '<b>آیا از حذف کامل کامنت ذخیره‌شده مطمئن هستید؟</b>',
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("بله", callback_data=f"comment_cmd_cleanup:yes:{chat_id}:{user_id}", style="success", icon_custom_emoji_id=CHECK_CUSTOM_EMOJI_ID),
+                    InlineKeyboardButton("بستن", callback_data=f"comment_cmd_cleanup:no:{chat_id}:{user_id}", style="danger", icon_custom_emoji_id=CROSS_CUSTOM_EMOJI_ID)
+                ]]), parse_mode=ParseMode.HTML)
+            set_comment_panel_session(db, user_id, chat_id, sent.message_id)
+            save_db(force=True)
             return
 
         if is_group and clean_raw in ["پنل", "admin", "/admin"]:
@@ -1610,16 +1637,9 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     return
 
         if u_str in db["states"].get("waiting_comment_msg", {}):
-            target_cid = db["states"]["waiting_comment_msg"][u_str]
+            target_cid = int(db["states"]["waiting_comment_msg"][u_str])
             if await is_admin_or_owner(context, target_cid, user_id):
-                del db["states"]["waiting_comment_msg"][u_str]
-                payload = extract_media_payload(update.message)
-                if payload:
-                    g_data = get_group_data(db, target_cid)
-                    g_data["comment"] = {"enabled": True, "custom": True, "payload": payload}
-                    mark_db_dirty()
-                    save_db(force=True)
-                    await update.message.reply_text(" <b>کامنت اتوماتیک اختصاصی این گروه با مدیا ذخیره شد!</b>", parse_mode=ParseMode.HTML)
+                if await save_comment_from_message(update, context, target_cid):
                     return
 
         if u_str in db["states"].get("waiting_add_food", {}):
