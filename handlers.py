@@ -134,7 +134,7 @@ async def handle_pending_comment_message(update: Update, context: ContextTypes.D
             target_cid = 0
     if not target_cid:
         return
-    if not await is_admin_or_owner(context, target_cid, update.effective_user.id):
+    if not await is_configured_group_manager(context, target_cid, update.effective_user.id):
         return
     handled = await save_comment_from_message(update, context, target_cid)
     if handled:
@@ -1665,15 +1665,12 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     return
 
         if u_str in db["states"].get("waiting_comment_msg", {}):
-            # The panel flow stores both the target group and the panel message
-            # id so the submitted comment can replace the prompt in-place.
-            # Keep compatibility with older states that stored only the group id.
             comment_state = db["states"]["waiting_comment_msg"][u_str]
             if isinstance(comment_state, dict):
-                target_cid = int(comment_state.get("chat_id", chat_id))
+                target_cid = int(comment_state.get("chat_id", 0))
             else:
                 target_cid = int(comment_state)
-            if await is_admin_or_owner(context, target_cid, user_id):
+            if target_cid and await is_admin_or_owner(context, target_cid, user_id):
                 if await save_comment_from_message(update, context, target_cid):
                     return
 
