@@ -1637,8 +1637,12 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     return
 
         if u_str in db["states"].get("waiting_comment_msg", {}):
-            target_cid = int(db["states"]["waiting_comment_msg"][u_str])
-            if await is_admin_or_owner(context, target_cid, user_id):
+            comment_state = db["states"]["waiting_comment_msg"][u_str]
+            if isinstance(comment_state, dict):
+                target_cid = int(comment_state.get("chat_id", 0))
+            else:
+                target_cid = int(comment_state)
+            if target_cid and await is_admin_or_owner(context, target_cid, user_id):
                 if await save_comment_from_message(update, context, target_cid):
                     return
 
