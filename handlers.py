@@ -112,6 +112,34 @@ async def command_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("ℹ شما در هیچ وضعیت انتظاری نیستید.")
 
+async def handle_pending_comment_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle a message that is explicitly expected as the saved comment.
+
+    This handler runs before the generic message/filter handlers so another
+    feature cannot consume the admin's message before the comment state is
+    processed.
+    """
+    if not update.message or not update.effective_user:
+        return
+    db = load_db()
+    state = db.setdefault("states", {}).setdefault("waiting_comment_msg", {}).get(str(update.effective_user.id))
+    if state is None:
+        return
+    if isinstance(state, dict):
+        target_cid = int(state.get("chat_id", 0) or 0)
+    else:
+        try:
+            target_cid = int(state)
+        except Exception:
+            target_cid = 0
+    if not target_cid:
+        return
+    if not await is_admin_or_owner(context, target_cid, update.effective_user.id):
+        return
+    handled = await save_comment_from_message(update, context, target_cid)
+    if handled:
+        raise ApplicationHandlerStop()
+
 async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
         return
