@@ -1266,6 +1266,40 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await render_comment_panel(query, context, cid, db)
         return
 
+    elif data.startswith("comment_main_back:"):
+        cid = int(data.replace("comment_main_back:", ""))
+        if not await comment_panel_owner(query, context, db, cid):
+            return
+        clear_comment_panel_session(db, user_id)
+        g_data = get_group_data(db, cid)
+        text = await build_group_lists_status(context, cid, db, g_data)
+        buttons = [
+            [
+                InlineKeyboardButton("مالکین", callback_data=f"list_owners:{cid}", style="primary", icon_custom_emoji_id="6060078591276749279"),
+                InlineKeyboardButton("مدیران", callback_data=f"list_admins:{cid}", style="primary", icon_custom_emoji_id="6057831537401925660")
+            ],
+            [
+                InlineKeyboardButton("اعضای ویژه", callback_data=f"list_special:{cid}", style="primary", icon_custom_emoji_id="6294080753298837622"),
+                InlineKeyboardButton("کلمات فیلتر", callback_data=f"list_filters:{cid}", style="primary", icon_custom_emoji_id="6086622219310470226")
+            ],
+            [
+                InlineKeyboardButton("سکوت‌ شده‌ها", callback_data=f"list_muted:{cid}", style="primary", icon_custom_emoji_id="5886328760218688328"),
+                InlineKeyboardButton("بن‌شده‌ها", callback_data=f"list_banned:{cid}", style="primary", icon_custom_emoji_id="5872823922751185495")
+            ],
+            [
+                InlineKeyboardButton("لیست معاف", callback_data=f"list_exempt:{cid}", style="primary", icon_custom_emoji_id="5884078304729767721"),
+                InlineKeyboardButton("لیست اخطار", callback_data=f"list_warns:{cid}", style="primary", icon_custom_emoji_id="5911318301580991657")
+            ],
+            [
+                InlineKeyboardButton("پاسخ‌دهی خودکار", callback_data=f"list_auto_resp:{cid}", style="primary", icon_custom_emoji_id="5859316800361077930"),
+                InlineKeyboardButton("کامنت‌گذاری", callback_data=f"list_comments:{cid}", style="primary", icon_custom_emoji_id="5908745251098473369")
+            ],
+            [InlineKeyboardButton("بررسی کاربر", callback_data=f"list_check_user:{cid}", style="primary", icon_custom_emoji_id="5884362854903064294")],
+            [InlineKeyboardButton("بازگشت", callback_data=f"panel_group_main:{cid}", style="danger", icon_custom_emoji_id=BACK_CUSTOM_EMOJI_ID)]
+        ]
+        await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+        return
+
     elif data.startswith("comment_set:"):
         cid = int(data.replace("comment_set:", ""))
         if not await comment_panel_owner(query, context, db, cid):
@@ -1277,17 +1311,69 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await query.message.edit_text(
             comment_setup_prompt(),
             reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("بستن", callback_data=f"comment_set_cancel:{cid}", style="danger", icon_custom_emoji_id=CROSS_CUSTOM_EMOJI_ID)
+                InlineKeyboardButton("بازگشت", callback_data=f"comment_main_back:{cid}", style="danger", icon_custom_emoji_id=BACK_CUSTOM_EMOJI_ID)
             ]]),
             parse_mode=ParseMode.HTML
         )
         return
 
+    elif data.startswith("comment_panel_back:"):
+        # The back button from the comment setup screen must return to the
+        # group's LISTS panel, not reopen the same comment screen.
+        cid = int(data.replace("comment_panel_back:", ""))
+        if not await comment_panel_owner(query, context, db, cid):
+            return
+        db.setdefault("states", {}).setdefault("waiting_comment_msg", {}).pop(str(user_id), None)
+        clear_comment_panel_session(db, user_id)
+        g_data = get_group_data(db, cid)
+        text = await build_group_lists_status(context, cid, db, g_data)
+        buttons = [
+            [
+                InlineKeyboardButton("مالکین", callback_data=f"list_owners:{cid}", style="primary", icon_custom_emoji_id="6060078591276749279"),
+                InlineKeyboardButton("مدیران", callback_data=f"list_admins:{cid}", style="primary", icon_custom_emoji_id="6057831537401925660")
+            ],
+            [
+                InlineKeyboardButton("اعضای ویژه", callback_data=f"list_special:{cid}", style="primary", icon_custom_emoji_id="6294080753298837622"),
+                InlineKeyboardButton("کلمات فیلتر", callback_data=f"list_filters:{cid}", style="primary", icon_custom_emoji_id="6086622219310470226")
+            ],
+            [
+                InlineKeyboardButton("سکوت‌ شده‌ها", callback_data=f"list_muted:{cid}", style="primary", icon_custom_emoji_id="5886328760218688328"),
+                InlineKeyboardButton("بن‌شده‌ها", callback_data=f"list_banned:{cid}", style="primary", icon_custom_emoji_id="5872823922751185495")
+            ],
+            [
+                InlineKeyboardButton("لیست معاف", callback_data=f"list_exempt:{cid}", style="primary", icon_custom_emoji_id="5884078304729767721"),
+                InlineKeyboardButton("لیست اخطار", callback_data=f"list_warns:{cid}", style="primary", icon_custom_emoji_id="5911318301580991657")
+            ],
+            [
+                InlineKeyboardButton("پاسخ‌دهی خودکار", callback_data=f"list_auto_resp:{cid}", style="primary", icon_custom_emoji_id="5859316800361077930"),
+                InlineKeyboardButton("کامنت‌گذاری", callback_data=f"list_comments:{cid}", style="primary", icon_custom_emoji_id="5908745251098473369")
+            ],
+            [InlineKeyboardButton("بررسی کاربر", callback_data=f"list_check_user:{cid}", style="primary", icon_custom_emoji_id="5884362854903064294")],
+            [InlineKeyboardButton("بازگشت", callback_data=f"panel_group_main:{cid}", style="danger", icon_custom_emoji_id=BACK_CUSTOM_EMOJI_ID)]
+        ]
+        await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+        await query.answer()
+        return
+
     elif data.startswith("comment_set_cancel:"):
         cid = int(data.replace("comment_set_cancel:", ""))
+        if not await comment_panel_owner(query, context, db, cid):
+            return
         db.setdefault("states", {}).setdefault("waiting_comment_msg", {}).pop(str(user_id), None)
-        mark_db_dirty(); save_db(force=True)
-        await render_comment_panel(query, context, cid, db)
+        clear_comment_panel_session(db, user_id)
+        g_data = get_group_data(db, cid)
+        text = await build_group_lists_status(context, cid, db, g_data)
+        buttons = [
+            [InlineKeyboardButton("مالکین", callback_data=f"list_owners:{cid}", style="primary", icon_custom_emoji_id="6060078591276749279"), InlineKeyboardButton("مدیران", callback_data=f"list_admins:{cid}", style="primary", icon_custom_emoji_id="6057831537401925660")],
+            [InlineKeyboardButton("اعضای ویژه", callback_data=f"list_special:{cid}", style="primary", icon_custom_emoji_id="6294080753298837622"), InlineKeyboardButton("کلمات فیلتر", callback_data=f"list_filters:{cid}", style="primary", icon_custom_emoji_id="6086622219310470226")],
+            [InlineKeyboardButton("سکوت‌ شده‌ها", callback_data=f"list_muted:{cid}", style="primary", icon_custom_emoji_id="5886328760218688328"), InlineKeyboardButton("بن‌شده‌ها", callback_data=f"list_banned:{cid}", style="primary", icon_custom_emoji_id="5872823922751185495")],
+            [InlineKeyboardButton("لیست معاف", callback_data=f"list_exempt:{cid}", style="primary", icon_custom_emoji_id="5884078304729767721"), InlineKeyboardButton("لیست اخطار", callback_data=f"list_warns:{cid}", style="primary", icon_custom_emoji_id="5911318301580991657")],
+            [InlineKeyboardButton("پاسخ‌دهی خودکار", callback_data=f"list_auto_resp:{cid}", style="primary", icon_custom_emoji_id="5859316800361077930"), InlineKeyboardButton("کامنت‌گذاری", callback_data=f"list_comments:{cid}", style="primary", icon_custom_emoji_id="5908745251098473369")],
+            [InlineKeyboardButton("بررسی کاربر", callback_data=f"list_check_user:{cid}", style="primary", icon_custom_emoji_id="5884362854903064294")],
+            [InlineKeyboardButton("بازگشت", callback_data=f"panel_group_main:{cid}", style="danger", icon_custom_emoji_id=BACK_CUSTOM_EMOJI_ID)]
+        ]
+        await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+        await query.answer()
         return
 
     elif data.startswith("comment_list_close:"):
