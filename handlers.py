@@ -146,8 +146,26 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         db = load_db()
+
+        # A comment message is a one-shot input for the comment setup panel.
+        # Consume it before any other message logic so configured panel managers
+        # are not blocked by unrelated handlers or Telegram-admin checks.
+        user_id = update.effective_user.id if update.effective_user else None
+        if user_id is not None:
+            pending_comment = db.setdefault("states", {}).setdefault("waiting_comment_msg", {}).get(str(user_id))
+            if pending_comment is not None:
+                if isinstance(pending_comment, dict):
+                    pending_chat_id = int(pending_comment.get("chat_id", 0) or 0)
+                else:
+                    try:
+                        pending_chat_id = int(pending_comment)
+                    except Exception:
+                        pending_chat_id = 0
+                if pending_chat_id and await save_comment_from_message(update, context, pending_chat_id):
+                    return
+
         await register_member(update, db)
-        
+
         chat = update.effective_chat
         is_group = chat and chat.type in ["group", "supergroup"]
 
@@ -1667,12 +1685,14 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if u_str in db["states"].get("waiting_comment_msg", {}):
             comment_state = db["states"]["waiting_comment_msg"][u_str]
             if isinstance(comment_state, dict):
-                target_cid = int(comment_state.get("chat_id", 0))
+                target_cid = int(comment_state.get("chat_id", 0) or 0)
             else:
-                target_cid = int(comment_state)
-            if target_cid and await is_admin_or_owner(context, target_cid, user_id):
-                if await save_comment_from_message(update, context, target_cid):
-                    return
+                try:
+                    target_cid = int(comment_state)
+                except Exception:
+                    target_cid = 0
+            if target_cid and await save_comment_from_message(update, context, target_cid):
+                return
 
         if u_str in db["states"].get("waiting_add_food", {}):
             target_cid = db["states"]["waiting_add_food"][u_str]
