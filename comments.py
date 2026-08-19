@@ -116,7 +116,7 @@ async def render_comment_panel(query, context, chat_id, db):
     await query.message.edit_text(
         comment_setup_prompt(),
         reply_markup=InlineKeyboardMarkup([[
-            InlineKeyboardButton("بستن", callback_data=f"comment_set_cancel:{chat_id}", style="danger", icon_custom_emoji_id=COMMENT_CLOSE_EMOJI)
+            InlineKeyboardButton("بازگشت", callback_data=f"comment_panel_back:{chat_id}", style="danger", icon_custom_emoji_id=BACK_CUSTOM_EMOJI_ID)
         ]]),
         parse_mode=ParseMode.HTML
     )
@@ -235,6 +235,7 @@ async def save_comment_from_message(update, context, target_cid):
         return False
     payload = extract_media_payload(update.message)
     if not payload:
+        logger.warning("Comment setup message received but no supported payload was extracted: user=%s chat=%s message=%s", user_id, target_cid, getattr(update.message, "message_id", None))
         return False
     db["states"]["waiting_comment_msg"].pop(str(user_id), None)
     g = get_group_data(db, target_cid)
