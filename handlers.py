@@ -9,6 +9,24 @@ async def command_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db = load_db()
     user = update.effective_user
 
+    # Deep-link entry for the per-group automatic-response manager.
+    # The group id comes from the panel button, so a user who manages several
+    # groups always enters the exact group that generated the link.
+    if chat_type == "private" and user and not user.is_bot:
+        args = list(getattr(context, "args", []) or [])
+        if args and args[0].startswith("autoresp_"):
+            try:
+                target_group_id = int(args[0].split("_", 1)[1])
+            except (ValueError, IndexError):
+                target_group_id = 0
+            if target_group_id:
+                await enter_auto_response_manager(update, context, target_group_id)
+                return
+
+        # A normal /start is a real bot command, so it must cancel an
+        # unfinished automatic-response flow instead of becoming a trigger.
+        cancel_auto_response_flow(db, user.id)
+
     if user and not user.is_bot and chat_type == "private":
         uid_str = str(user.id)
         started_users = db.setdefault("started_users", {})
@@ -46,6 +64,9 @@ async def command_owner_panel(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not update.message:
         return
     user_id = update.effective_user.id
+    # /panel is a real bot command; never allow an unfinished auto-response
+    # flow to consume or reinterpret it.
+    cancel_auto_response_flow(load_db(), user_id)
 
     if int(user_id) != int(OWNER_ID):
         await update.message.reply_text(
@@ -79,6 +100,9 @@ async def command_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     user_id = str(update.effective_user.id)
     db = load_db()
+    # /done is a real command too. End only the auto-response flow first,
+    # then keep the existing /done behavior for every other feature.
+    cancel_auto_response_flow(db, int(user_id))
     states = db.get("states", {})
     done_anything = False
 
@@ -163,6 +187,12 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         pending_chat_id = 0
                 if pending_chat_id and await save_comment_from_message(update, context, pending_chat_id):
                     return
+
+            # Automatic-response management is a private-only state machine.
+            # It must run before the generic private handlers so management
+            # keyboard inputs cannot accidentally become normal bot input.
+            if await handle_auto_response_private_message(update, context):
+                return
 
         await register_member(update, db)
 
@@ -2321,6 +2351,12 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     ml,
                     reply_to_message_id=update.message.message_id
                 )
+            return
+
+        # Automatic responses are evaluated only after the bot's existing
+        # group commands have had a chance to handle the message. This keeps
+        # the new feature from hijacking any pre-existing command.
+        if is_group and await handle_auto_response_group_message(update, context):
             return
 
     except Exception:
