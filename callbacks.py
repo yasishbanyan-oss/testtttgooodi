@@ -1256,51 +1256,105 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await query.message.edit_text("<b> پیام مورد نظر برای ارسال به تمام کاربران خصوصی ربات را بفرستید:</b>", reply_markup=kb, parse_mode=ParseMode.HTML)
         return
 
-    elif data.startswith("panel_comment:"):
-        cid = int(data.replace("panel_comment:", ""))
-        if not await is_configured_group_manager(context, cid, user_id):
-            await query.answer(" دسترسی غیرمجاز!", show_alert=True)
-            return
-        await render_comment_panel_message(query, cid, db)
+    elif data.startswith("list_comments:"):
+        cid = int(data.replace("list_comments:", ""))
+        await render_comment_panel(query, context, cid, db)
         return
 
-    elif data.startswith("comment_toggle:"):
-        cid = int(data.replace("comment_toggle:", ""))
-        if not await is_configured_group_manager(context, cid, user_id):
-            await query.answer(" دسترسی غیرمجاز!", show_alert=True)
-            return
-        g_data = get_group_data(db, cid)
-        c_set = g_data.setdefault("comment", {"enabled": False, "custom": False})
-        c_set["enabled"] = not c_set.get("enabled", False)
-        log_admin_action(db, user_id, query.from_user.full_name, g_data.get("title", ""), cid, "تغییر کامنت", f"وضعیت: {c_set['enabled']}")
-        mark_db_dirty()
-        save_db()
-        await render_comment_panel_message(query, cid, db)
+    elif data.startswith("panel_comment:"):
+        cid = int(data.replace("panel_comment:", ""))
+        await render_comment_panel(query, context, cid, db)
         return
 
     elif data.startswith("comment_set:"):
         cid = int(data.replace("comment_set:", ""))
-        if not await is_configured_group_manager(context, cid, user_id):
-            await query.answer(" دسترسی غیرمجاز!", show_alert=True)
+        if not await comment_panel_owner(query, context, db, cid):
             return
-        db["states"]["waiting_comment_msg"][str(user_id)] = cid
-        mark_db_dirty()
-        save_db()
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton(" لغو", callback_data="cancel_current_flow", style="danger")]])
-        await query.message.edit_text("<b> پیام یا مدیایی که می‌خواهید زیر پست‌های کانال قرار گیرد بفرستید:</b>", reply_markup=kb, parse_mode=ParseMode.HTML)
+        db.setdefault("states", {}).setdefault("waiting_comment_msg", {})[str(user_id)] = {
+            "chat_id": int(cid), "panel_message_id": int(query.message.message_id)
+        }
+        mark_db_dirty(); save_db(force=True)
+        await query.message.edit_text(
+            comment_setup_prompt(),
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("بستن", callback_data=f"comment_set_cancel:{cid}", style="danger", icon_custom_emoji_id=CROSS_CUSTOM_EMOJI_ID)
+            ]]),
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    elif data.startswith("comment_set_cancel:"):
+        cid = int(data.replace("comment_set_cancel:", ""))
+        db.setdefault("states", {}).setdefault("waiting_comment_msg", {}).pop(str(user_id), None)
+        mark_db_dirty(); save_db(force=True)
+        await render_comment_panel(query, context, cid, db)
+        return
+
+    elif data.startswith("comment_list_close:"):
+        cid = int(data.replace("comment_list_close:", ""))
+        if not await comment_panel_owner(query, context, db, cid):
+            return
+        await query.message.edit_text(
+            f'<b><tg-emoji emoji-id="{CHECK_CUSTOM_EMOJI_ID}">💠</tg-emoji> لیست کامنت با موفقیت بسته شد.</b>',
+            parse_mode=ParseMode.HTML
+        )
+        clear_comment_panel_session(db, user_id); save_db(force=True)
+        return
+
+    elif data.startswith("comment_cleanup_confirm:"):
+        cid = int(data.replace("comment_cleanup_confirm:", ""))
+        await comment_cleanup_confirm(query, context, cid, db)
+        return
+
+    elif data.startswith("comment_cleanup:"):
+        _, decision, cid_s = data.split(":", 2)
+        cid = int(cid_s)
+        await comment_cleanup_execute(query, context, cid, db, decision == "yes")
+        return
+
+    elif data.startswith("comment_toggle:"):
+        # Kept for backwards compatibility with old keyboards.
+        cid = int(data.replace("comment_toggle:", ""))
+        if not await comment_panel_owner(query, context, db, cid):
+            return
+        g = get_group_data(db, cid)
+        c = _comment_settings(g)
+        c["enabled"] = not c.get("enabled", False)
+        mark_db_dirty(); save_db(force=True)
+        await render_comment_panel(query, context, cid, db)
         return
 
     elif data.startswith("comment_delete:"):
         cid = int(data.replace("comment_delete:", ""))
-        if not await is_configured_group_manager(context, cid, user_id):
-            await query.answer(" دسترسی غیرمجاز!", show_alert=True)
+        await comment_cleanup_confirm(query, context, cid, db)
+        return
+
+    elif data.startswith("comment_cmd_close:"):
+        _, cid_s, owner_s = data.split(":", 2)
+        cid, owner = int(cid_s), int(owner_s)
+        if int(user_id) != owner or not await is_configured_group_manager(context, cid, user_id):
+            await query.answer("این پنل برای شما نیست.", show_alert=True)
             return
-        g_data = get_group_data(db, cid)
-        g_data["comment"] = {"enabled": False, "custom": False}
-        mark_db_dirty()
-        save_db()
-        await query.answer("کامنت ذخیره‌شده این گروه حذف شد.", show_alert=True)
-        await render_comment_panel_message(query, cid, db)
+        await query.message.edit_text(
+            f'<b><tg-emoji emoji-id="{CHECK_CUSTOM_EMOJI_ID}">💠</tg-emoji> لیست کامنت با موفقیت بسته شد.</b>',
+            parse_mode=ParseMode.HTML)
+        clear_comment_panel_session(db, user_id); save_db(force=True)
+        return
+
+    elif data.startswith("comment_cmd_cleanup:"):
+        _, decision, cid_s, owner_s = data.split(":", 3)
+        cid, owner = int(cid_s), int(owner_s)
+        if int(user_id) != owner or not await is_admin_or_owner(context, cid, user_id):
+            await query.answer("این پنل برای شما نیست.", show_alert=True)
+            return
+        if decision == "yes":
+            g = get_group_data(db, cid)
+            g["comment"] = {"enabled": False, "custom": False, "payload": None}
+            text = f'<b><tg-emoji emoji-id="{CHECK_CUSTOM_EMOJI_ID}">✅</tg-emoji> کامنت با موفقیت حذف شد.</b>'
+        else:
+            text = f'<b><tg-emoji emoji-id="{CHECK_CUSTOM_EMOJI_ID}">✅</tg-emoji> پنل پاکسازی کامنت با موفقیت بسته شد.</b>'
+        await query.message.edit_text(text, parse_mode=ParseMode.HTML)
+        clear_comment_panel_session(db, user_id); mark_db_dirty(); save_db(force=True)
         return
 
     elif data.startswith("panel_welcome:"):
