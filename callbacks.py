@@ -1305,6 +1305,11 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await open_auto_response_panel(query, context, cid, db)
         return
 
+    elif data.startswith("auto_access:"):
+        _, cid_s, access = data.split(":", 2)
+        await auto_response_access_callback(query, context, int(cid_s), access)
+        return
+
     elif data.startswith("auto_cleanup:"):
         _, cid_s, decision = data.split(":", 2)
         await auto_response_cleanup_callback(query, context, int(cid_s), decision == "yes")
