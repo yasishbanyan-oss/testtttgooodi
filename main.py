@@ -24,7 +24,7 @@ def main():
     app.add_handler(MessageHandler(filters.ChatType.GROUPS & filters.TEXT & (~filters.COMMAND), handle_welcome_text_command), group=-4)
     app.add_handler(MessageHandler(filters.ChatType.GROUPS & filters.IS_AUTOMATIC_FORWARD, handle_automatic_channel_comments), group=-3)
     # Pending comment messages must be consumed before filters/generic handlers.
-    app.add_handler(MessageHandler(filters.ALL & (~filters.COMMAND), handle_pending_comment_message), group=-3)
+    app.add_handler(MessageHandler(filters.ALL & (~filters.COMMAND), handle_pending_comment_message), group=-9)
     app.add_handler(ChatMemberHandler(handle_chat_member_welcome, ChatMemberHandler.CHAT_MEMBER), group=-2)
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_new_chat_members), group=-2)
     app.add_handler(ChatMemberHandler(track_chats, ChatMemberHandler.MY_CHAT_MEMBER))
