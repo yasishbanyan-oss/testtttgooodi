@@ -4,6 +4,7 @@ from telegram import ReplyKeyboardMarkup, ReplyKeyboardRemove, KeyboardButton
 
 
 AUTO_STATE_KEY = "auto_response_flow"
+AUTO_PANEL_KEY = "auto_response_panel_context"
 AUTO_GROUP_KEY = "auto_responses"
 
 # Premium custom emoji IDs used in the automatic-response UI.
@@ -19,6 +20,9 @@ AUTO_EMOJI = {
     "finish": "5836866392124563486",
     "list": "5859215993183674044",
     "stage1": "5899731270090363274",
+    "num1": "5899760673436471128",
+    "num2": "5900246704820588032",
+    "num3": "5899833069405212539",
     "all": "6057495125498532044",
     "managers": "6059760849596191487",
     "owner": "6294100961119966181",
@@ -33,6 +37,7 @@ AUTO_EMOJI = {
     "plane": "5339236405874814208",
     "warning": "5420323339723881652",
     "removed": "5803378592247190638",
+    "bullet": "5884330316230827477",
     "done": "5902204801885671680",
 }
 
@@ -43,6 +48,10 @@ def _ae(name: str, fallback: str) -> str:
 
 def _state_store(db: dict) -> dict:
     return db.setdefault("states", {}).setdefault(AUTO_STATE_KEY, {})
+
+
+def _panel_store(db: dict) -> dict:
+    return db.setdefault("states", {}).setdefault(AUTO_PANEL_KEY, {})
 
 
 def _group_responses(g_data: dict) -> list:
@@ -134,8 +143,14 @@ def _access_label(access: str) -> str:
 def _auto_main_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         [
-            [KeyboardButton("➕ افزودن پاسخ"), KeyboardButton("❌ حذف پاسخ")],
-            [KeyboardButton("🎖️ پایان دادن"), KeyboardButton("📝 مشاهده لیست پاسخ")],
+            [
+                KeyboardButton("افزودن پاسخ", style="success", icon_custom_emoji_id=AUTO_EMOJI["add"]),
+                KeyboardButton("حذف پاسخ", style="danger", icon_custom_emoji_id=AUTO_EMOJI["delete"]),
+            ],
+            [
+                KeyboardButton("پایان دادن", style="danger", icon_custom_emoji_id=AUTO_EMOJI["finish"]),
+                KeyboardButton("مشاهده لیست پاسخ", style="primary", icon_custom_emoji_id=AUTO_EMOJI["list"]),
+            ],
         ],
         resize_keyboard=True,
         is_persistent=True,
@@ -143,20 +158,41 @@ def _auto_main_keyboard() -> ReplyKeyboardMarkup:
     )
 
 
-def _auto_stage1_keyboard() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(
+def _auto_stage1_keyboard(chat_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
         [
-            [KeyboardButton("🟢 همه کاربران"), KeyboardButton("🔴 کاربران مقام دار")],
-            [KeyboardButton("👑 مقام مالک"), KeyboardButton("⛔ لغو")],
+            InlineKeyboardButton(
+                "همه کاربران", callback_data=f"auto_access:{int(chat_id)}:all",
+                style="success", icon_custom_emoji_id=AUTO_EMOJI["all"],
+            ),
+            InlineKeyboardButton(
+                "کاربران مقام دار", callback_data=f"auto_access:{int(chat_id)}:manager",
+                style="primary", icon_custom_emoji_id=AUTO_EMOJI["managers"],
+            ),
         ],
-        resize_keyboard=True,
-        is_persistent=True,
-    )
+        [
+            InlineKeyboardButton(
+                "مقام مالک", callback_data=f"auto_access:{int(chat_id)}:owner",
+                style="primary", icon_custom_emoji_id=AUTO_EMOJI["owner"],
+            ),
+            InlineKeyboardButton(
+                "لغو", callback_data=f"auto_access:{int(chat_id)}:cancel",
+                style="danger", icon_custom_emoji_id=AUTO_EMOJI["cancel"],
+            ),
+        ],
+    ])
 
 
 def _auto_delete_keyboard(g_data: dict) -> ReplyKeyboardMarkup:
-    rows = [[KeyboardButton("❌ لغو")]]
-    buttons = [KeyboardButton(f"❗️ {item.get('trigger', '')}") for item in _group_responses(g_data) if item.get("trigger")]
+    rows = [[KeyboardButton("لغو", style="danger", icon_custom_emoji_id=AUTO_EMOJI["delete"])]]
+    buttons = [
+        KeyboardButton(
+            str(item.get("trigger", "")),
+            style="primary",
+            icon_custom_emoji_id=AUTO_EMOJI["bullet"],
+        )
+        for item in _group_responses(g_data) if item.get("trigger")
+    ]
     for i in range(0, len(buttons), 2):
         rows.append(buttons[i:i + 2])
     return ReplyKeyboardMarkup(
@@ -188,6 +224,26 @@ def _auto_group_panel_keyboard(bot_username: str, chat_id: int) -> InlineKeyboar
     ])
 
 
+async def _sync_group_auto_panel(context, flow: dict | None, g_data: dict):
+    flow = flow or {}
+    chat_id = _flow_group(flow)
+    message_id = flow.get("panel_message_id")
+    if not chat_id or not message_id:
+        return
+    try:
+        me = await context.bot.get_me()
+        text = _auto_group_panel_list_text(g_data) if _group_responses(g_data) else _auto_group_panel_text()
+        await context.bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=int(message_id),
+            text=text,
+            reply_markup=_auto_group_panel_keyboard(me.username, chat_id),
+            parse_mode=ParseMode.HTML,
+        )
+    except Exception:
+        logger.exception("Failed to sync automatic-response group panel | chat_id=%s | message_id=%s", chat_id, message_id)
+
+
 def _auto_group_panel_text() -> str:
     return (
         f'<b>{_ae("welcome", "🔄")} به بخش پاسخ‌دهی خودکار خوش آمدید.</b>\n\n'
@@ -202,8 +258,16 @@ async def open_auto_response_panel(query, context, chat_id: int, db: dict):
         await query.answer(" دسترسی غیرمجاز!", show_alert=True)
         return
     me = await context.bot.get_me()
+    _panel_store(db)[str(user_id)] = {
+        "chat_id": int(chat_id),
+        "panel_message_id": int(query.message.message_id),
+    }
+    mark_db_dirty()
+    save_db(force=True)
+    g_data = get_group_data(db, chat_id)
+    panel_text = _auto_group_panel_list_text(g_data) if _group_responses(g_data) else _auto_group_panel_text()
     await query.message.edit_text(
-        _auto_group_panel_text(),
+        panel_text,
         reply_markup=_auto_group_panel_keyboard(me.username, chat_id),
         parse_mode=ParseMode.HTML,
     )
@@ -223,7 +287,16 @@ async def enter_auto_response_manager(update: Update, context: ContextTypes.DEFA
         )
         return True
 
-    _set_flow(db, user_id, {"chat_id": int(chat_id), "step": "menu"})
+    pending_panel = _panel_store(db).get(str(user_id), {}) or {}
+    panel_message_id = pending_panel.get("panel_message_id") if int(pending_panel.get("chat_id", 0) or 0) == int(chat_id) else None
+    if panel_message_id:
+        _panel_store(db).pop(str(user_id), None)
+        mark_db_dirty()
+        save_db(force=True)
+    flow_data = {"chat_id": int(chat_id), "step": "menu"}
+    if panel_message_id:
+        flow_data["panel_message_id"] = int(panel_message_id)
+    _set_flow(db, user_id, flow_data)
     await update.message.reply_text(
         f'<b>{_ae("menu", "☠️")} گزینه‌ی موردنظر را جهت مدیریت سیستم پاسخ‌دهی مشخص کنید.</b>',
         reply_markup=_auto_main_keyboard(),
@@ -265,7 +338,7 @@ async def handle_auto_response_private_message(update: Update, context: ContextT
     g_data = get_group_data(db, group_id)
 
     # Management keyboard actions.
-    if clean == _norm_auto_text("❌ لغو"):
+    if clean in {_norm_auto_text("❌ لغو"), _norm_auto_text("لغو")}:
         _clear_flow(db, user.id)
         await update.message.reply_text(
             f'<b>{_ae("done", "👑")} سیستم افزودن پاسخ‌ها لغو گردید و به منوی قبل بازگشتید.</b>',
@@ -273,20 +346,20 @@ async def handle_auto_response_private_message(update: Update, context: ContextT
             parse_mode=ParseMode.HTML,
         )
         # A fresh menu state is intentional: the user remains inside management.
-        _set_flow(db, user.id, {"chat_id": group_id, "step": "menu"})
+        _set_flow(db, user.id, {"chat_id": group_id, "step": "menu", **({"panel_message_id": int(flow.get("panel_message_id"))} if flow.get("panel_message_id") else {})})
         return True
 
-    if clean == _norm_auto_text("⛔ لغو"):
+    if clean in {_norm_auto_text("⛔ لغو"), _norm_auto_text("لغو")}:
         _clear_flow(db, user.id)
         await update.message.reply_text(
             f'<b>{_ae("done", "👑")} سیستم افزودن پاسخ‌ها لغو گردید و به منوی قبل بازگشتید.</b>',
             reply_markup=_auto_main_keyboard(),
             parse_mode=ParseMode.HTML,
         )
-        _set_flow(db, user.id, {"chat_id": group_id, "step": "menu"})
+        _set_flow(db, user.id, {"chat_id": group_id, "step": "menu", **({"panel_message_id": int(flow.get("panel_message_id"))} if flow.get("panel_message_id") else {})})
         return True
 
-    if clean == _norm_auto_text("🎖️ پایان دادن"):
+    if clean in {_norm_auto_text("🎖️ پایان دادن"), _norm_auto_text("پایان دادن")}:
         _clear_flow(db, user.id)
         await update.message.reply_text(
             f'<b>{_ae("done", "🐱")} تمام!</b>\n'
@@ -296,7 +369,7 @@ async def handle_auto_response_private_message(update: Update, context: ContextT
         )
         return True
 
-    if clean == _norm_auto_text("📝 مشاهده لیست پاسخ"):
+    if clean in {_norm_auto_text("📝 مشاهده لیست پاسخ"), _norm_auto_text("مشاهده لیست پاسخ")}:
         await update.message.reply_text(
             _auto_list_text(g_data),
             reply_markup=_auto_main_keyboard(),
@@ -304,7 +377,7 @@ async def handle_auto_response_private_message(update: Update, context: ContextT
         )
         return True
 
-    if clean == _norm_auto_text("❌ حذف پاسخ"):
+    if clean in {_norm_auto_text("❌ حذف پاسخ"), _norm_auto_text("حذف پاسخ")}:
         if not _group_responses(g_data):
             await update.message.reply_text(
                 f'<b>{_ae("warning", "⚠️")} هنوز هیچ پاسخ خودکاری برای این گروه ثبت نشده است.</b>',
@@ -312,7 +385,7 @@ async def handle_auto_response_private_message(update: Update, context: ContextT
                 parse_mode=ParseMode.HTML,
             )
             return True
-        _set_flow(db, user.id, {"chat_id": group_id, "step": "delete"})
+        _set_flow(db, user.id, {"chat_id": group_id, "step": "delete", **({"panel_message_id": int(flow.get("panel_message_id"))} if flow.get("panel_message_id") else {})})
         await update.message.reply_text(
             f'<b>{_ae("plane", "✈️")} برای حذف یکی از پاسخ‌ها، آن را از لیست ارسال کنید.</b>',
             reply_markup=_auto_delete_keyboard(g_data),
@@ -320,14 +393,14 @@ async def handle_auto_response_private_message(update: Update, context: ContextT
         )
         return True
 
-    if clean == _norm_auto_text("➕ افزودن پاسخ"):
-        _set_flow(db, user.id, {"chat_id": group_id, "step": "access"})
+    if clean in {_norm_auto_text("➕ افزودن پاسخ"), _norm_auto_text("افزودن پاسخ")}:
+        _set_flow(db, user.id, {"chat_id": group_id, "step": "access", **({"panel_message_id": int(flow.get("panel_message_id"))} if flow.get("panel_message_id") else {})})
         await update.message.reply_text(
             f'<b>{_ae("stage1", "👨‍🚀")} ابتدا مرحله اول را مشخص کنید:</b>\n\n'
-            '<b>1⃣ - ربات به همه کاربران پاسخ دهد.</b>\n'
-            '<b>2⃣- ربات فقط به مقام داران پاسخ دهد.</b>\n'
-            '<b>3⃣- ربات فقط به مالکان پاسخ دهد.</b>',
-            reply_markup=_auto_stage1_keyboard(),
+            f'<b>{_ae("num1", "1⃣")} - ربات به همه کاربران پاسخ دهد.</b>\n'
+            f'<b>{_ae("num2", "2⃣")}- ربات فقط به مقام داران پاسخ دهد.</b>\n'
+            f'<b>{_ae("num3", "3⃣")}- ربات فقط به مالکان پاسخ دهد.</b>',
+            reply_markup=_auto_stage1_keyboard(group_id),
             parse_mode=ParseMode.HTML,
         )
         return True
@@ -337,8 +410,11 @@ async def handle_auto_response_private_message(update: Update, context: ContextT
     if step == "access":
         access_map = {
             _norm_auto_text("🟢 همه کاربران"): "all",
+            _norm_auto_text("همه کاربران"): "all",
             _norm_auto_text("🔴 کاربران مقام دار"): "manager",
+            _norm_auto_text("کاربران مقام دار"): "manager",
             _norm_auto_text("👑 مقام مالک"): "owner",
+            _norm_auto_text("مقام مالک"): "owner",
         }
         access = access_map.get(clean)
         if not access:
@@ -348,12 +424,12 @@ async def handle_auto_response_private_message(update: Update, context: ContextT
                 return False
             await update.message.reply_text(
                 f'<b>{_ae("stage1", "👨‍🚀")} ابتدا یکی از سه سطح دسترسی را انتخاب کنید.</b>',
-                reply_markup=_auto_stage1_keyboard(),
+                reply_markup=_auto_stage1_keyboard(group_id),
                 parse_mode=ParseMode.HTML,
             )
             return True
 
-        _set_flow(db, user.id, {"chat_id": group_id, "step": "trigger", "access": access})
+        _set_flow(db, user.id, {"chat_id": group_id, "step": "trigger", "access": access, **({"panel_message_id": int(flow.get("panel_message_id"))} if flow.get("panel_message_id") else {})})
         await update.message.reply_text(
             f'<b>{_ae("stage2", "☕️")} مرحله دوم!</b>\n'
             '<b>کلمه یا جمله‌ای که میخواهید گودی به آن پاسخ دهد را ارسال کنید.</b>',
@@ -440,14 +516,16 @@ async def handle_auto_response_private_message(update: Update, context: ContextT
 
         mark_db_dirty()
         save_db(force=True)
+        panel_flow = dict(flow)
         _clear_flow(db, user.id)
+        await _sync_group_auto_panel(context, panel_flow, g_data)
 
         await update.message.reply_text(
             f'<b>{_ae("success", "✅")} پاسخ‌دهی خودکار کلمه‌ی {html.escape(trigger)} شما فعال شد.</b>\n'
             f'<b>هر زمان ربات کلمه‌ی {html.escape(trigger)} را ببیند پاسخ تنظیم‌شده را ارسال می‌کند.</b>',
             parse_mode=ParseMode.HTML,
         )
-        _set_flow(db, user.id, {"chat_id": group_id, "step": "menu"})
+        _set_flow(db, user.id, {"chat_id": group_id, "step": "menu", **({"panel_message_id": int(flow.get("panel_message_id"))} if flow.get("panel_message_id") else {})})
         await update.message.reply_text(
             f'<b>{_ae("info", "👆")} دستورات بعدی خود را انجام دهید یا از طریق دکمه پایان دادن سیستم را ببندید.</b>',
             reply_markup=_auto_main_keyboard(),
@@ -456,8 +534,8 @@ async def handle_auto_response_private_message(update: Update, context: ContextT
         return True
 
     if step == "delete":
-        if clean == _norm_auto_text("❌ لغو"):
-            _set_flow(db, user.id, {"chat_id": group_id, "step": "menu"})
+        if clean in {_norm_auto_text("❌ لغو"), _norm_auto_text("لغو")}:
+            _set_flow(db, user.id, {"chat_id": group_id, "step": "menu", **({"panel_message_id": int(flow.get("panel_message_id"))} if flow.get("panel_message_id") else {})})
             await update.message.reply_text(
                 f'<b>{_ae("back", "⬅️")} به منوی مدیریت پاسخ‌ها بازگشتید.</b>',
                 reply_markup=_auto_main_keyboard(),
@@ -480,9 +558,11 @@ async def handle_auto_response_private_message(update: Update, context: ContextT
             return True
 
         removed_trigger = found.get("trigger", selected)
+        panel_flow = dict(flow)
         items.remove(found)
         mark_db_dirty()
         save_db(force=True)
+        await _sync_group_auto_panel(context, panel_flow, g_data)
 
         if items:
             await update.message.reply_text(
@@ -495,7 +575,7 @@ async def handle_auto_response_private_message(update: Update, context: ContextT
                 parse_mode=ParseMode.HTML,
             )
         else:
-            _set_flow(db, user.id, {"chat_id": group_id, "step": "menu"})
+            _set_flow(db, user.id, {"chat_id": group_id, "step": "menu", **({"panel_message_id": int(flow.get("panel_message_id"))} if flow.get("panel_message_id") else {})})
             await update.message.reply_text(
                 f'<b>{_ae("removed", "⚡️")} کلمه‌ی {html.escape(removed_trigger)} با موفقیت از لیست پاسخ‌دهی حذف گردید.</b>',
                 reply_markup=_auto_main_keyboard(),
@@ -514,15 +594,26 @@ def _auto_list_text(g_data: dict) -> str:
         f'<b>{_ae("list_count", "😀")} تعداد کل پاسخ‌ها: {len(items)}</b>',
         "",
     ]
-    if not items:
-        lines.append("<b>هنوز پاسخی برای این گروه ثبت نشده است.</b>")
-        return "\n".join(lines)
-
     for item in items:
         trigger = html.escape(str(item.get("trigger", "")))
-        payload = item.get("response", {}) or {}
-        preview = _payload_preview(payload)
-        lines.append(f'<b>{trigger} {_ae("left", "👈")} {preview} {_ae("right", "👉")}</b>')
+        preview = _payload_preview(item.get("response", {}) or {})
+        lines.append(f'<b>{_ae("bullet", "💥")} {trigger} —&gt; {preview}</b>')
+    if not items:
+        lines.append('<b>هنوز پاسخی برای این گروه ثبت نشده است.</b>')
+    return "\n".join(lines)
+
+
+def _auto_group_panel_list_text(g_data: dict) -> str:
+    items = _group_responses(g_data)
+    lines = [
+        f'<b>{_ae("success", "✅")} لیست پاسخ‌های خودکار:</b>',
+        f'<b>- {_ae("list_count", "🔴")} تعداد کل پاسخ‌های ذخیره شده: {len(items)}</b>',
+        "",
+    ]
+    for item in items:
+        trigger = html.escape(str(item.get("trigger", "")))
+        preview = _payload_preview(item.get("response", {}) or {})
+        lines.append(f'<b>{_ae("bullet", "💥")} {trigger} —&gt; {preview}</b>')
     return "\n".join(lines)
 
 
@@ -642,6 +733,54 @@ async def handle_auto_response_group_message(update: Update, context: ContextTyp
     return True
 
 
+async def auto_response_access_callback(query, context, chat_id: int, access: str):
+    db = load_db()
+    user_id = query.from_user.id
+    if not await is_configured_group_manager(context, chat_id, user_id):
+        await query.answer(" دسترسی غیرمجاز!", show_alert=True)
+        return
+
+    flow = _flow(db, user_id) or {}
+    if _flow_group(flow) != int(chat_id) or flow.get("step") != "access":
+        await query.answer(" این مرحله منقضی شده است.", show_alert=True)
+        return
+
+    if access == "cancel":
+        panel_flow = dict(flow)
+        _set_flow(db, user_id, {
+            "chat_id": int(chat_id),
+            "step": "menu",
+            **({"panel_message_id": int(panel_flow["panel_message_id"])} if panel_flow.get("panel_message_id") else {}),
+        })
+        await query.message.edit_text(
+            f'<b>{_ae("done", "👑")} سیستم افزودن پاسخ‌ها لغو گردید و به منوی قبل بازگشتید.</b>',
+            reply_markup=None,
+            parse_mode=ParseMode.HTML,
+        )
+        await query.message.reply_text(
+            f'<b>{_ae("menu", "☠️")} گزینه‌ی موردنظر را جهت مدیریت سیستم پاسخ‌دهی مشخص کنید.</b>',
+            reply_markup=_auto_main_keyboard(),
+            parse_mode=ParseMode.HTML,
+        )
+        await query.answer()
+        return
+
+    if access not in {"all", "manager", "owner"}:
+        await query.answer(" گزینه نامعتبر است.", show_alert=True)
+        return
+
+    flow["access"] = access
+    flow["step"] = "trigger"
+    _set_flow(db, user_id, flow)
+    await query.message.edit_text(
+        f'<b>{_ae("stage2", "☕️")} مرحله دوم!</b>\n'
+        '<b>کلمه یا جمله‌ای که میخواهید گودی به آن پاسخ دهد را ارسال کنید.</b>',
+        reply_markup=None,
+        parse_mode=ParseMode.HTML,
+    )
+    await query.answer()
+
+
 async def auto_response_cleanup_callback(query, context, chat_id: int, confirm: bool):
     db = load_db()
     user_id = query.from_user.id
@@ -654,6 +793,9 @@ async def auto_response_cleanup_callback(query, context, chat_id: int, confirm: 
         g_data[AUTO_GROUP_KEY] = []
         mark_db_dirty()
         save_db(force=True)
+        active_flow = _flow(db, user_id) or {}
+        if _flow_group(active_flow) == int(chat_id):
+            await _sync_group_auto_panel(context, active_flow, g_data)
         text = f'<b>{_ae("success", "✅")} لیست پاسخ‌های خودکار با موفقیت پاکسازی شد.</b>'
     else:
         text = f'<b>{_ae("back", "⬅️")} عملیات پاکسازی لیست پاسخ‌ها لغو شد.</b>'
