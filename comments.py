@@ -221,6 +221,28 @@ async def save_comment_from_message(update, context, target_cid):
     db = load_db()
     user_id = update.effective_user.id
     state = db.setdefault("states", {}).setdefault("waiting_comment_msg", {}).get(str(user_id))
+    panel_message_id = None
+
+    # The setup screen itself is also stored as a per-user panel session.
+    # Use the replied-to panel message as a safe fallback if the waiting state
+    # was lost between the callback and the next message. This keeps ordinary
+    # group messages untouched and only accepts a message explicitly sent in
+    # reply to this user's own comment setup panel.
+    if state is None:
+        session = _session(db, user_id)
+        replied = getattr(update.message, "reply_to_message", None)
+        if session and replied:
+            try:
+                same_chat = int(session.get("chat_id", 0)) == int(target_cid or update.effective_chat.id)
+                same_panel = int(session.get("message_id", 0)) == int(getattr(replied, "message_id", 0))
+            except (TypeError, ValueError):
+                same_chat = same_panel = False
+            if same_chat and same_panel:
+                state = {
+                    "chat_id": int(session.get("chat_id")),
+                    "panel_message_id": int(session.get("message_id")),
+                }
+
     if state is None:
         return False
     if isinstance(state, dict):
@@ -228,7 +250,6 @@ async def save_comment_from_message(update, context, target_cid):
         panel_message_id = state.get("panel_message_id")
     else:
         target_cid = int(state)
-        panel_message_id = None
     if not await is_admin_or_owner(context, target_cid, user_id):
         db["states"]["waiting_comment_msg"].pop(str(user_id), None)
         mark_db_dirty(); save_db(force=True)
