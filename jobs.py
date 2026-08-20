@@ -1,5 +1,6 @@
 # GoodiBot modular feature module
 from core import *
+from backup_restore import periodic_database_backup_job, BACKUP_INTERVAL_SECONDS
 
 async def hourly_goh_khor_job(context: ContextTypes.DEFAULT_TYPE):
     db = load_db()
@@ -95,3 +96,11 @@ def setup_chat_jobs(job_queue, active_chats: list):
 async def post_init(application: Application):
     db = load_db()
     setup_chat_jobs(application.job_queue, db.get("active_chats", []))
+    backup_job_name = "database_backup_15m"
+    if not application.job_queue.get_jobs_by_name(backup_job_name):
+        application.job_queue.run_repeating(
+            periodic_database_backup_job,
+            interval=BACKUP_INTERVAL_SECONDS,
+            first=BACKUP_INTERVAL_SECONDS,
+            name=backup_job_name,
+        )
