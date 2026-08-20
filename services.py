@@ -137,7 +137,7 @@ async def resolve_check_user(context: ContextTypes.DEFAULT_TYPE, db: dict, chat_
         if uid <= 0:
             return None
         try:
-            member = await context.bot.get_chat_member(chat_id, uid)
+            member = await get_chat_member_cached(context, chat_id, uid)
             return member.user
         except Exception:
             cached = db.get("members", {}).get(str(uid))
@@ -153,7 +153,7 @@ async def resolve_check_user(context: ContextTypes.DEFAULT_TYPE, db: dict, chat_
     for uid_str, info in db.get("members", {}).items():
         if str(info.get("username", "")).lower() == username:
             try:
-                member = await context.bot.get_chat_member(chat_id, int(uid_str))
+                member = await get_chat_member_cached(context, chat_id, int(uid_str))
                 return member.user
             except Exception:
                 return {
@@ -329,7 +329,7 @@ def increment_user_stat(db: dict, user_id: int, stat_key: str, amount: int = 1):
 
 async def is_user_in_chat(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_id: int) -> bool:
     try:
-        member = await context.bot.get_chat_member(chat_id, user_id)
+        member = await get_chat_member_cached(context, chat_id, user_id)
         return member.status in [ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER]
     except Exception:
         return False
@@ -365,7 +365,12 @@ async def register_member(update: Update, db: dict):
                 del last_msgs[oldest_k]
             mark_db_dirty()
 
-        if update.message and (update.message.text or update.message.caption or update.message.photo):
+        if update.message and (
+            update.message.text or update.message.caption or update.message.photo
+            or update.message.animation or update.message.video or update.message.document
+            or update.message.voice or update.message.audio or update.message.video_note
+            or update.message.sticker
+        ):
             m_logs = g_data.setdefault("message_logs", [])
             log_item = {
                 "message_id": update.message.message_id,
@@ -387,10 +392,38 @@ async def register_member(update: Update, db: dict):
             elif update.message.document:
                 log_item["media_type"] = "document"
                 log_item["file_id"] = update.message.document.file_id
+            elif update.message.voice:
+                log_item["media_type"] = "voice"
+                log_item["file_id"] = update.message.voice.file_id
+            elif update.message.audio:
+                log_item["media_type"] = "audio"
+                log_item["file_id"] = update.message.audio.file_id
+            elif update.message.video_note:
+                log_item["media_type"] = "video_note"
+                log_item["file_id"] = update.message.video_note.file_id
+            elif update.message.sticker:
+                log_item["media_type"] = "sticker"
+                log_item["file_id"] = update.message.sticker.file_id
 
             m_logs.append(log_item)
+            # Maintain a small inverted index so report searches do not need
+            # to scan every log entry for every query.
+            token_index = g_data.setdefault("message_log_index", {})
+            by_id = g_data.setdefault("message_log_by_id", {})
+            token_set = set(normalize_text(log_item.get("text", "")).lower().split())
+            for token in token_set:
+                token_index.setdefault(token, []).append(log_item["message_id"])
+            by_id[str(log_item["message_id"])] = log_item
             if len(m_logs) > 300:
-                m_logs.pop(0)
+                old_item = m_logs.pop(0)
+                old_id = str(old_item.get("message_id"))
+                by_id.pop(old_id, None)
+                old_tokens = set(normalize_text(old_item.get("text", "")).lower().split())
+                for token in old_tokens:
+                    ids = token_index.get(token, [])
+                    token_index[token] = [mid for mid in ids if str(mid) != old_id]
+                    if not token_index[token]:
+                        token_index.pop(token, None)
             mark_db_dirty()
 
         if "hourly_messages" not in db: db["hourly_messages"] = {}
