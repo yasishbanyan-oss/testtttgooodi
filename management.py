@@ -31,7 +31,7 @@ async def resolve_group_target(update, context, db, chat_id: int, target_text: s
     if target.isdigit():
         uid = int(target)
         try:
-            m = await context.bot.get_chat_member(chat_id, uid)
+            m = await get_chat_member_cached(context, chat_id, uid)
             return m.user.id, m.user.full_name or "کاربر", m.user.username or ""
         except Exception:
             info = db.get("members", {}).get(str(uid))
@@ -61,7 +61,7 @@ async def resolve_group_target(update, context, db, chat_id: int, target_text: s
             seen.add(str(uid))
             if str(info.get("username", "")).lstrip("@").lower() == uname:
                 try:
-                    m = await context.bot.get_chat_member(chat_id, int(uid))
+                    m = await get_chat_member_cached(context, chat_id, int(uid))
                     return m.user.id, m.user.full_name or info.get("fullname", "کاربر"), m.user.username or uname
                 except Exception:
                     return int(uid), info.get("fullname", "کاربر"), info.get("username", uname)
@@ -74,11 +74,19 @@ async def configure_group_management(update, context, db, chat_id: int):
     try:
         admins = await context.bot.get_chat_administrators(chat_id)
     except Exception:
-        await update.message.reply_text(f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> ربات نتوانست لیست مدیران گروه را دریافت کند.</b>', parse_mode=ParseMode.HTML)
+        error_text = f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> ربات نتوانست لیست مدیران گروه را دریافت کند.</b>'
+        if getattr(update, "message", None):
+            await update.message.reply_text(error_text, parse_mode=ParseMode.HTML)
+        else:
+            await context.bot.send_message(chat_id=chat_id, text=error_text, parse_mode=ParseMode.HTML)
         return
     owner = next((a.user for a in admins if a.status == ChatMemberStatus.OWNER), None)
     if not owner:
-        await update.message.reply_text(f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> مالک اصلی گروه پیدا نشد.</b>', parse_mode=ParseMode.HTML)
+        error_text = f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> مالک اصلی گروه پیدا نشد.</b>'
+        if getattr(update, "message", None):
+            await update.message.reply_text(error_text, parse_mode=ParseMode.HTML)
+        else:
+            await context.bot.send_message(chat_id=chat_id, text=error_text, parse_mode=ParseMode.HTML)
         return
     group_admins = [a.user for a in admins if a.status == ChatMemberStatus.ADMINISTRATOR and not a.user.is_bot]
     g = get_group_data(db, chat_id)
@@ -100,7 +108,10 @@ async def configure_group_management(update, context, db, chat_id: int):
         f'<b><tg-emoji emoji-id="5819051035284479206">🚨</tg-emoji> درصورت وقوع هرگونه مشکل به کانال پشتیبانی ربات مراجعه کنید:</b>\n'
         f'<b><tg-emoji emoji-id="6006061397480315684">💎</tg-emoji> @GoodiSupport</b>'
     )
-    await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+    if getattr(update, "message", None):
+        await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+    else:
+        await context.bot.send_message(chat_id=chat_id, text=text, parse_mode=ParseMode.HTML)
 
 async def command_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
