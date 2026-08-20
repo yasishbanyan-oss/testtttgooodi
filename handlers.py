@@ -188,6 +188,12 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if pending_chat_id and await save_comment_from_message(update, context, pending_chat_id):
                     return
 
+            # Database restore is owner-only and private-only. It must run before
+            # the generic private handlers so a backup file cannot be consumed by
+            # another feature.
+            if await handle_backup_restore_private_message(update, context):
+                return
+
             # Automatic-response management is a private-only state machine.
             # It must run before the generic private handlers so management
             # keyboard inputs cannot accidentally become normal bot input.
