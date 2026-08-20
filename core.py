@@ -22,6 +22,8 @@ import sys
 import asyncio
 
 import threading
+import time
+import unicodedata
 
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
@@ -229,7 +231,31 @@ WELCOME_CMD_PATTERN = re.compile(
     re.IGNORECASE
 )
 
-URL_REGEX = re.compile(r"(https?://\S+|t\.me/\S+|telegram\.me/\S+|www\.\S+)", re.IGNORECASE)
+URL_REGEX = re.compile(
+    r"(?:(?:https?|hxxps?)://|(?:www\.)|(?:t\.me/)|(?:telegram\.me/)|(?:(?:[\w-]+\.)+[\w-]{2,})(?:/|\b))\S*",
+    re.IGNORECASE | re.UNICODE,
+)
+
+_URL_CONFUSABLES = str.maketrans({
+    "а": "a", "е": "e", "о": "o", "р": "p", "с": "c", "х": "x", "у": "y",
+    "і": "i", "ѕ": "s", "һ": "h", "ı": "i", "н": "h", "ї": "i",
+    "ο": "o", "α": "a", "ε": "e", "ρ": "p", "χ": "x", "ι": "i", "ν": "v",
+})
+
+def normalize_url_text(value: str) -> str:
+    if not value:
+        return ""
+    value = unicodedata.normalize("NFKC", value)
+    value = value.translate(_URL_CONFUSABLES)
+    value = re.sub(r"[\u200b\u200c\u200d\ufeff\u2060\u2061\u2062\u2063\u2064]", "", value)
+    value = re.sub(r"[\u3002\uff0e\uff61\u2024\u2025\u2027\u22c5]", ".", value)
+    # Spaces are ignored only for URL detection, catching split-domain bypasses
+    # such as "goo gle.com" without changing the original message text.
+    value = re.sub(r"\s+", "", value)
+    return value
+
+def contains_url_like_text(value: str) -> bool:
+    return bool(URL_REGEX.search(normalize_url_text(value)))
 
 ENGLISH_CHAR_REGEX = re.compile(r"[a-zA-Z]")
 
@@ -457,6 +483,7 @@ def get_default_db_structure() -> dict:
             "sexy": True,
             "jazab": True
         },
+        "_state_timestamps": {},
         "states": {
             "waiting_lef_media": {},
             "waiting_add_food": {},
@@ -505,50 +532,171 @@ def migrate_db_if_needed(data: dict) -> dict:
     new_db["version"] = 5
     return new_db
 
+_DB_LOCK = threading.RLock()
+_MEMBER_CACHE = {}
+_COMMAND_SPAM_STATE = {}
+_SAVE_LAST_TIME = 0.0
+_SAVE_TIMER = None
+_SAVE_DEBOUNCE_SECONDS = 0.25
+STATE_TTL_SECONDS = 15 * 60
+COMMAND_SPAM_WINDOW_SECONDS = 6.0
+COMMAND_SPAM_MAX = 3
+
+async def get_chat_member_cached(context, chat_id: int, user_id: int, ttl: float = 8.0):
+    key = (int(chat_id), int(user_id))
+    now = time.monotonic()
+    cached = _MEMBER_CACHE.get(key)
+    if cached and now - cached[0] < ttl:
+        return cached[1]
+    member = await context.bot.get_chat_member(chat_id, int(user_id))
+    _MEMBER_CACHE[key] = (now, member)
+    return member
+
+def set_state(db: dict, state_name: str, user_id: int, value):
+    db.setdefault("states", {}).setdefault(state_name, {})[str(user_id)] = value
+    db.setdefault("_state_timestamps", {})[f"{state_name}:{user_id}"] = time.time()
+
+def clear_state_timestamp(db: dict, state_name: str, user_id: int):
+    db.setdefault("_state_timestamps", {}).pop(f"{state_name}:{user_id}", None)
+
+def cleanup_expired_states(db: dict, now: float | None = None) -> int:
+    now = time.time() if now is None else now
+    stamps = db.setdefault("_state_timestamps", {})
+    removed = 0
+    for key, created in list(stamps.items()):
+        try:
+            if now - float(created) <= STATE_TTL_SECONDS:
+                continue
+            state_name, uid = key.rsplit(":", 1)
+            state = db.setdefault("states", {}).get(state_name, {})
+            if isinstance(state, dict):
+                state.pop(str(uid), None)
+            stamps.pop(key, None)
+            removed += 1
+        except Exception:
+            stamps.pop(key, None)
+    for key in list(stamps):
+        try:
+            state_name, uid = key.rsplit(":", 1)
+            if str(uid) not in db.setdefault("states", {}).get(state_name, {}):
+                stamps.pop(key, None)
+        except Exception:
+            stamps.pop(key, None)
+    if removed:
+        mark_db_dirty()
+    return removed
+
+def is_command_like_text(text: str) -> bool:
+    t = normalize_text(text or "").strip().lower()
+    if not t:
+        return False
+    if t.startswith("/"):
+        return True
+    prefixes = (
+        "فیلتر", "ثبت فیلتر", "تنظیم فیلتر", "حذف فیلتر", "پاکسازی", "لیست ",
+        "اخطار", "هشدار", "بن", "اخراج", "سکوت", "میوت", "mute", "unmute",
+        "رفع سکوت", "حذف سکوت", "حذف بن", "رفع مسدود", "مدیر", "مالک", "ویژه",
+        "معاف", "ترفیع", "عزل", "حذف مدیر", "حذف ادمین", "حذف مالک", "حذف ویژه",
+        "لینک", "گودی لینک", "پیکربندی", "پنل", "راهنما", "گزارش",
+        "دوز", "گودی دوز", "قفل", "ببند", "باز کن", "خوش آمد", "ناموسی", "فحش",
+        "شعار", "غذا", "شعر", "سنجاق", "پین", "حذف پین", "کول داون", "cooldown",
+    )
+    return any(t == p.strip() or t.startswith(p) for p in prefixes)
+
+def command_spam_guard(chat_id: int, user_id: int, text: str) -> tuple[bool, bool]:
+    if not is_command_like_text(text):
+        return False, False
+    key = (int(chat_id), int(user_id))
+    now = time.monotonic()
+    state = _COMMAND_SPAM_STATE.get(key)
+    if not state or now - state["last"] > COMMAND_SPAM_WINDOW_SECONDS:
+        _COMMAND_SPAM_STATE[key] = {"last": now, "count": 1, "warned": False}
+        return False, False
+    state["last"] = now
+    state["count"] += 1
+    if state["count"] <= COMMAND_SPAM_MAX:
+        return False, False
+    if not state["warned"]:
+        state["warned"] = True
+        return True, True
+    return True, False
+
 def load_db() -> dict:
     global _DB_CACHE
-    if _DB_CACHE is not None:
-        return _DB_CACHE
+    with _DB_LOCK:
+        if _DB_CACHE is not None:
+            cleanup_expired_states(_DB_CACHE)
+            return _DB_CACHE
 
-    default_struct = get_default_db_structure()
-    if not os.path.exists(DB_FILE):
-        _DB_CACHE = default_struct
-        save_db(force=True)
-        return _DB_CACHE
+        default_struct = get_default_db_structure()
+        if not os.path.exists(DB_FILE):
+            _DB_CACHE = default_struct
+            save_db(force=True)
+            return _DB_CACHE
 
-    try:
-        with open(DB_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
+        try:
+            with open(DB_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
             data = migrate_db_if_needed(data)
             for key, val in default_struct.items():
                 if key not in data:
                     data[key] = val
             _DB_CACHE = data
+            cleanup_expired_states(_DB_CACHE)
             return _DB_CACHE
-    except Exception as e:
-        logger.error(f"Database load error! Initializing default. Details: {e}")
-        _DB_CACHE = default_struct
-        save_db(force=True)
-        return _DB_CACHE
+        except Exception as e:
+            logger.error(f"Database load error! Initializing default. Details: {e}")
+            _DB_CACHE = default_struct
+            save_db(force=True)
+            return _DB_CACHE
 
 def mark_db_dirty():
     global _DB_DIRTY
     _DB_DIRTY = True
 
-def save_db(force: bool = False):
-    global _DB_DIRTY, _DB_CACHE
-    if not force and not _DB_DIRTY:
-        return
-    if _DB_CACHE is None:
-        return
+def _write_db_now():
+    global _DB_DIRTY, _DB_CACHE, _SAVE_LAST_TIME
+    with _DB_LOCK:
+        if _DB_CACHE is None:
+            return
+        try:
+            with open(TEMP_DB_FILE, "w", encoding="utf-8") as f:
+                json.dump(_DB_CACHE, f, ensure_ascii=False, indent=4)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(TEMP_DB_FILE, DB_FILE)
+            _DB_DIRTY = False
+            _SAVE_LAST_TIME = time.monotonic()
+        except Exception as e:
+            logger.error(f"Error saving DB: {e}")
 
+def _delayed_db_write():
+    global _SAVE_TIMER
     try:
-        with open(TEMP_DB_FILE, "w", encoding="utf-8") as f:
-            json.dump(_DB_CACHE, f, ensure_ascii=False, indent=4)
-        os.replace(TEMP_DB_FILE, DB_FILE)
-        _DB_DIRTY = False
-    except Exception as e:
-        logger.error(f"Error saving DB: {e}")
+        _write_db_now()
+    finally:
+        with _DB_LOCK:
+            _SAVE_TIMER = None
+
+def save_db(force: bool = False):
+    global _SAVE_TIMER
+    with _DB_LOCK:
+        if not force and not _DB_DIRTY:
+            return
+        if _DB_CACHE is None:
+            return
+        now = time.monotonic()
+        # Coalesce bursts of synchronous save_db(force=True) calls. The first
+        # write remains durable immediately; subsequent writes in the same
+        # burst are merged and persisted within a quarter second.
+        if force and now - _SAVE_LAST_TIME < _SAVE_DEBOUNCE_SECONDS:
+            if _SAVE_TIMER is None:
+                delay = max(0.01, _SAVE_DEBOUNCE_SECONDS - (now - _SAVE_LAST_TIME))
+                _SAVE_TIMER = threading.Timer(delay, _delayed_db_write)
+                _SAVE_TIMER.daemon = True
+                _SAVE_TIMER.start()
+            return
+        _write_db_now()
 
 def get_session_key(user_id: int, chat_id: int) -> str:
     return f"{user_id}_{chat_id}"
@@ -572,6 +720,11 @@ def clear_user_all_states(db: dict, user_id: int, chat_id: int | None = None) ->
         if isinstance(st_dict, dict) and u_str in st_dict:
             del st_dict[u_str]
             cleared = True
+
+    stamps = db.setdefault("_state_timestamps", {})
+    for stamp_key in list(stamps):
+        if stamp_key.endswith(f":{u_str}"):
+            stamps.pop(stamp_key, None)
 
     if cleared:
         mark_db_dirty()
