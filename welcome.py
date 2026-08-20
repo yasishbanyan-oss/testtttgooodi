@@ -198,6 +198,12 @@ async def track_chats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         setup_chat_jobs(context.job_queue, [chat.id])
 
+        if new_status == ChatMemberStatus.ADMINISTRATOR and not (g_data.get("management", {}) or {}).get("configured"):
+            try:
+                await configure_group_management(update, context, db, chat.id)
+            except Exception:
+                logger.exception("Automatic first-admin group configuration failed | chat_id=%s", chat.id)
+
         welcome_msg = (
             "<b>سلام نینیا ، گودی اینجاست...! </b>"
             '<tg-emoji emoji-id="5276251363313996750">😊</tg-emoji>\n\n'
