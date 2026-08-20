@@ -493,11 +493,11 @@ async def open_check_user_panel(update: Update, context: ContextTypes.DEFAULT_TY
             reply_markup=build_check_user_keyboard(),
             parse_mode=ParseMode.HTML
         )
-    db.setdefault("states", {}).setdefault("waiting_check_user", {})[str(user_id)] = {
+    set_state(db, "waiting_check_user", user_id, {
         "chat_id": chat_id, "panel_message_id": panel_message.message_id,
         "return_to_advanced": False,
         "return_to_lists": True
-    }
+    })
     mark_db_dirty(); save_db(force=True)
 
 def build_check_user_error_text() -> str:
