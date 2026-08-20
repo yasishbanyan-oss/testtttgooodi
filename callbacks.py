@@ -223,8 +223,33 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await query.answer(" گزینه نامعتبر است.", show_alert=True)
         return
 
+    if data == "help_back":
+        txt = (
+            '<b>سلام عزیزم به ربات من خوش اومدی! <tg-emoji emoji-id="5352750090974929602">😍</tg-emoji></b>\n\n'
+            '<b>از طریق دکمه‌های زیر میتونی کاملا با گودی که یه اژدها کوچولو هست آشنا بشی! <tg-emoji emoji-id="5884128023271182329">🐉</tg-emoji></b>'
+        )
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("راهنمای سرگرمی", callback_data="help_fun", style="primary", icon_custom_emoji_id="5415940089375106928"),
+             InlineKeyboardButton("راهنمای بی ادبی", callback_data="help_rude", style="primary", icon_custom_emoji_id="5832633418386513259")],
+            [InlineKeyboardButton("راهنمای کاربردی", callback_data="help_useful", style="primary", icon_custom_emoji_id="5830338333892418460"),
+             InlineKeyboardButton("راهنمای مدیریتی", callback_data="help_admin", style="primary", icon_custom_emoji_id="5803348359972393936")]
+        ])
+        await query.message.edit_text(txt, reply_markup=kb, parse_mode=ParseMode.HTML)
+        await query.answer()
+        return
+
     if data.startswith("help_"):
-        await query.answer("Coming soon..!", show_alert=True)
+        section = data.split("_", 1)[1]
+        titles = {"fun": "راهنمای سرگرمی", "rude": "راهنمای بی‌ادبی", "useful": "راهنمای کاربردی", "admin": "راهنمای مدیریتی"}
+        texts = {
+            "fun": "در این بخش قابلیت‌های سرگرمی و بازی‌های گودی را می‌بینی.",
+            "rude": "در این بخش قابلیت‌های مربوط به پاسخ‌ها و امکانات بی‌ادبی گودی قرار دارد.",
+            "useful": "در این بخش امکانات کاربردی ربات و قابلیت‌های عمومی را می‌بینی.",
+            "admin": "در این بخش دستورات مدیریتی گروه و پنل مدیریت گودی قرار دارد.",
+        }
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("بازگشت", callback_data="help_back", style="danger", icon_custom_emoji_id=BACK_CUSTOM_EMOJI_ID)]])
+        await query.message.edit_text(f"<b>{titles.get(section, 'راهنما')}</b>\n\n<b>{texts.get(section, 'راهنمای گودی')}</b>", reply_markup=kb, parse_mode=ParseMode.HTML)
+        await query.answer()
         return
 
     # LOCKS PANEL NAVIGATION & TOGGLE
@@ -421,7 +446,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         locks = g_data.setdefault("locks", get_default_locks_structure())
         if not locks.get(lock_key, False):
             try:
-                bot_member = await context.bot.get_chat_member(cid, context.bot.id)
+                bot_member = await get_chat_member_cached(context, cid, context.bot.id)
                 if bot_member.status not in (ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER):
                     await query.answer(" ربات ادمین گروه نیست.", show_alert=True)
                     return
@@ -456,7 +481,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         locks = g_data.setdefault("locks", get_default_locks_structure())
         if not locks.get(lock_key, False):
             try:
-                bot_member = await context.bot.get_chat_member(cid, context.bot.id)
+                bot_member = await get_chat_member_cached(context, cid, context.bot.id)
                 if bot_member.status not in (ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER):
                     await query.answer(" ربات ادمین گروه نیست.", show_alert=True)
                     return
@@ -504,7 +529,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         if int(user_id) != int(OWNER_ID):
             await query.answer(" دسترسی غیرمجاز! فقط مالک کل.", show_alert=True)
             return
-        db["states"]["waiting_shutdown_msg"] = {str(user_id): current_chat_id}
+        set_state(db, "waiting_shutdown_msg", user_id, current_chat_id)
         mark_db_dirty()
         save_db()
         kb = InlineKeyboardMarkup([[InlineKeyboardButton(" لغو", callback_data="cancel_current_flow", style="danger")]])
@@ -606,7 +631,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             return
         fun_type = data.split(":")[1]
         state_key = "waiting_fun_named_msg" if fun_type == "named" else "waiting_fun_normal_msg"
-        db["states"][state_key] = {str(user_id): "global"}
+        set_state(db, state_key, user_id, "global")
         mark_db_dirty()
         save_db()
         title = "ناموسی" if fun_type == "named" else "عادی"
@@ -667,7 +692,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         target_cid = int(data.replace("ogrp_link:", ""))
         invite_link = None
         try:
-            bot_member = await context.bot.get_chat_member(target_cid, context.bot.id)
+            bot_member = await get_chat_member_cached(context, target_cid, context.bot.id)
             if bot_member.status == ChatMemberStatus.ADMINISTRATOR:
                 invite_link = await context.bot.export_chat_invite_link(target_cid)
         except Exception:
@@ -770,7 +795,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             await query.answer(" دسترسی غیرمجاز!", show_alert=True)
             return
         target_cid = int(data.replace("ogrp_search:", ""))
-        db["states"]["waiting_search_query"][str(user_id)] = target_cid
+        set_state(db, "waiting_search_query", user_id, target_cid)
         mark_db_dirty()
         save_db()
         kb = InlineKeyboardMarkup([[InlineKeyboardButton(" لغو", callback_data="cancel_current_flow", style="danger")]])
@@ -1058,10 +1083,10 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         if not await is_configured_group_manager(context, cid, user_id):
             await query.answer(" دسترسی غیرمجاز!", show_alert=True)
             return
-        db.setdefault("states", {}).setdefault("waiting_check_user", {})[str(user_id)] = {
+        set_state(db, "waiting_check_user", user_id, {
             "chat_id": cid, "panel_message_id": query.message.message_id,
             "return_to_advanced": False, "return_to_lists": True
-        }
+        })
         mark_db_dirty(); save_db(force=True)
         await query.answer("آیدی عددی یا یوزرنیم را ارسال کن.")
         await query.message.edit_text(
@@ -1097,6 +1122,22 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         if list_type == "owners": allowed = await is_primary_or_bot_owner_of_group(context, cid, g, user_id)
         if not allowed:
             await query.answer(" دسترسی غیرمجاز!", show_alert=True); return
+        stores = {
+            "owners": (g.get("management", {}) or {}).get("owners", []) or [],
+            "admins": (g.get("management", {}) or {}).get("admins", []) or [],
+            "special": (g.get("management", {}) or {}).get("special", []) or [],
+            "exempt": (g.get("management", {}) or {}).get("exempt", []) or [],
+            "warns": g.get("warnings", {}) or {},
+            "muted": g.get("muted_users", {}) or {},
+            "banned": g.get("banned_users", {}) or {},
+        }
+        if not stores.get(list_type):
+            names = {"owners": "مالکین", "admins": "مدیران", "special": "ویژه", "exempt": "معاف", "warns": "اخطارها", "muted": "سکوت", "banned": "بن"}
+            await query.answer(
+                f'<tg-emoji emoji-id="{CHECK_CUSTOM_EMOJI_ID}">✔️</tg-emoji> لیست {names.get(list_type, "موردنظر")} از قبل خالی می‌باشد.',
+                show_alert=True
+            )
+            return
         await render_cleanup_confirm(query, list_type, cid); return
 
     elif data.startswith("list_cleanup_cancel:"):
@@ -1201,7 +1242,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         if int(user_id) != int(OWNER_ID):
             await query.answer(" دسترسی غیرمجاز!", show_alert=True)
             return
-        db["states"]["waiting_owner_add_poem"] = {str(user_id): current_chat_id}
+        set_state(db, "waiting_owner_add_poem", user_id, current_chat_id)
         mark_db_dirty()
         save_db()
         kb = InlineKeyboardMarkup([[InlineKeyboardButton(" لغو", callback_data="cancel_current_flow", style="danger")]])
@@ -1212,7 +1253,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         if int(user_id) != int(OWNER_ID):
             await query.answer(" دسترسی غیرمجاز!", show_alert=True, style="danger")
             return
-        db["states"]["waiting_owner_add_food"] = {str(user_id): current_chat_id}
+        set_state(db, "waiting_owner_add_food", user_id, current_chat_id)
         mark_db_dirty()
         save_db()
         kb = InlineKeyboardMarkup([[InlineKeyboardButton(" لغو", callback_data="cancel_current_flow", style="danger")]])
@@ -1249,7 +1290,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         if int(user_id) != int(OWNER_ID):
             await query.answer("این بخش مخصوص مالک اصلی است.", show_alert=True)
             return
-        db["states"]["waiting_user_broadcast_msg"] = {str(user_id): current_chat_id}
+        set_state(db, "waiting_user_broadcast_msg", user_id, current_chat_id)
         mark_db_dirty()
         save_db()
         kb = InlineKeyboardMarkup([[InlineKeyboardButton(" لغو", callback_data="cancel_current_flow", style="danger")]])
@@ -1319,9 +1360,9 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         cid = int(data.replace("comment_set:", ""))
         if not await comment_panel_owner(query, context, db, cid):
             return
-        db.setdefault("states", {}).setdefault("waiting_comment_msg", {})[str(user_id)] = {
+        set_state(db, "waiting_comment_msg", user_id, {
             "chat_id": int(cid), "panel_message_id": int(query.message.message_id)
-        }
+        })
         mark_db_dirty(); save_db(force=True)
         await query.message.edit_text(
             comment_setup_prompt(),
@@ -1485,7 +1526,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         if not await is_configured_group_manager(context, cid, user_id):
             await query.answer(" دسترسی غیرمجاز!", show_alert=True)
             return
-        db["states"]["waiting_welcome_msg"][str(user_id)] = cid
+        set_state(db, "waiting_welcome_msg", user_id, cid)
         mark_db_dirty()
         save_db()
         prompt_text = (
@@ -1541,7 +1582,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         if not await is_configured_group_manager(context, cid, user_id):
             await query.answer(" دسترسی غیرمجاز!", show_alert=True)
             return
-        db["states"]["waiting_add_food"][str(user_id)] = cid
+        set_state(db, "waiting_add_food", user_id, cid)
         mark_db_dirty()
         save_db()
         kb = InlineKeyboardMarkup([[InlineKeyboardButton(" لغو", callback_data="cancel_current_flow", style="danger")]])
@@ -1553,7 +1594,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         if not await is_configured_group_manager(context, cid, user_id):
             await query.answer(" دسترسی غیرمجاز!", show_alert=True)
             return
-        db["states"]["waiting_del_food"][str(user_id)] = cid
+        set_state(db, "waiting_del_food", user_id, cid)
         mark_db_dirty()
         save_db()
         kb = InlineKeyboardMarkup([[InlineKeyboardButton(" لغو", callback_data="cancel_current_flow", style="danger")]])
@@ -1565,7 +1606,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         if not await is_configured_group_manager(context, cid, user_id):
             await query.answer(" دسترسی غیرمجاز!", show_alert=True)
             return
-        db["states"]["waiting_poem_names"][str(user_id)] = cid
+        set_state(db, "waiting_poem_names", user_id, cid)
         mark_db_dirty()
         save_db()
         g_data = get_group_data(db, cid)
@@ -1589,7 +1630,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         if not await is_configured_group_manager(context, cid, user_id):
             await query.answer(" دسترسی غیرمجاز!", show_alert=True)
             return
-        db["states"]["waiting_add_poem"][str(user_id)] = cid
+        set_state(db, "waiting_add_poem", user_id, cid)
         mark_db_dirty()
         save_db()
         kb = InlineKeyboardMarkup([[InlineKeyboardButton(" لغو", callback_data="cancel_current_flow", style="danger")]])
@@ -1599,6 +1640,9 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     # TIC TAC TOE
     elif data.startswith("xo_"):
         parts = data.split(":")
+        if len(parts) < 2:
+            await query.answer("اطلاعات بازی نامعتبر است.", show_alert=True)
+            return
         act = parts[0]
         game_id = parts[1]
         
@@ -1668,6 +1712,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 game["p2_id"] = user_id
                 game["p2_name"] = query.from_user.full_name
 
+            game["updated_at"] = time.time()
             db["xo_games"][game_id] = game
             mark_db_dirty()
             save_db()
@@ -1709,6 +1754,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
 
             game["status"] = "playing"
             game["turn"] = game["p1_id"]
+            game["updated_at"] = time.time()
             db["xo_games"][game_id] = game
             mark_db_dirty()
             save_db()
@@ -1759,7 +1805,17 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 await query.answer("نوبت شما نیست!", show_alert=True)
                 return
 
-            idx = int(parts[2])
+            if len(parts) != 3:
+                await query.answer("خانه بازی نامعتبر است.", show_alert=True)
+                return
+            try:
+                idx = int(parts[2])
+            except (TypeError, ValueError):
+                await query.answer("خانه بازی نامعتبر است.", show_alert=True)
+                return
+            if idx < 0 or idx >= len(game.get("board", [])):
+                await query.answer("خانه بازی نامعتبر است.", show_alert=True)
+                return
             if game["board"][idx] is not None:
                 await query.answer("این خانه قبلاً انتخاب شده است!", show_alert=True)
                 return
@@ -1770,7 +1826,9 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
 
             if winner_symbol:
                 game["status"] = "finished"
-                db["xo_games"][game_id] = game
+                # Finished games do not need to stay in the database; keeping
+                # them was an unbounded memory/database leak.
+                db["xo_games"].pop(game_id, None)
                 mark_db_dirty()
                 save_db()
 
@@ -1802,6 +1860,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 next_symbol = "X" if symbol == "O" else "O"
                 
                 game["turn"] = next_turn_id
+                game["updated_at"] = time.time()
                 db["xo_games"][game_id] = game
                 mark_db_dirty()
                 save_db()
@@ -1997,7 +2056,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         if int(user_id) != int(OWNER_ID):
             await query.answer(" دسترسی غیرمجاز! فقط مالک کل.", show_alert=True)
             return
-        db["states"]["waiting_lef_media"][str(user_id)] = current_chat_id
+        set_state(db, "waiting_lef_media", user_id, current_chat_id)
         mark_db_dirty()
         save_db()
         kb = InlineKeyboardMarkup([[InlineKeyboardButton(" لغو", callback_data="cancel_current_flow", style="danger")]])
@@ -2049,7 +2108,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         if int(user_id) != int(OWNER_ID):
             await query.answer("این بخش مخصوص مالک اصلی است.", show_alert=True)
             return
-        db["states"]["waiting_cooldown"][str(user_id)] = current_chat_id
+        set_state(db, "waiting_cooldown", user_id, current_chat_id)
         mark_db_dirty()
         save_db()
         kb = InlineKeyboardMarkup([[InlineKeyboardButton(" لغو", callback_data="cancel_current_flow", style="danger")]])
