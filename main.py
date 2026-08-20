@@ -31,7 +31,7 @@ def main():
     app.add_handler(InlineQueryHandler(handle_inline_whisper))
     app.add_handler(CallbackQueryHandler(handle_callback_query))
     app.add_handler(CommandHandler("start", command_start))
-    app.add_handler(CommandHandler("help", handle_messages))
+    app.add_handler(CommandHandler("help", command_help))
     app.add_handler(CommandHandler("panel", command_owner_panel))
     app.add_handler(CommandHandler("cancel", command_cancel))
     app.add_handler(CommandHandler("done", command_done))
