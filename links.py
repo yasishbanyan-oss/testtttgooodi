@@ -3,7 +3,7 @@ from core import *
 
 async def check_bot_admin_and_link_rights(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> bool:
     try:
-        bot_member = await context.bot.get_chat_member(chat_id, context.bot.id)
+        bot_member = await get_chat_member_cached(context, chat_id, context.bot.id)
         if bot_member.status != ChatMemberStatus.ADMINISTRATOR:
             return False
         if not getattr(bot_member, "can_invite_users", True):
