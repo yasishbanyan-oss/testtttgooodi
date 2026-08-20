@@ -1,9 +1,9 @@
 # GoodiBot entry point
 import core
 import services, permissions, moderation, management, welcome, comments, jobs, links
-import panels, games, whisper, callbacks, handlers, support, help, fun, filter_handler, auto_responses
+import panels, games, whisper, callbacks, handlers, support, help, fun, filter_handler, auto_responses, backup_restore
 
-registry = core.bind_all_modules([services, permissions, moderation, management, welcome, comments, jobs, links, panels, games, whisper, callbacks, handlers, support, help, fun, filter_handler, auto_responses])
+registry = core.bind_all_modules([services, permissions, moderation, management, welcome, comments, jobs, links, panels, games, whisper, callbacks, handlers, support, help, fun, filter_handler, auto_responses, backup_restore])
 globals().update(registry)
 from core import *
 
