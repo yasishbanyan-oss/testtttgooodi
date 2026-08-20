@@ -84,10 +84,10 @@ def _get_filter_panel_session(db, user_id):
     return (db.setdefault("states", {}).setdefault("filter_panel", {}) or {}).get(_session_key(user_id))
 
 def _set_filter_panel_session(db, user_id, chat_id, message_id):
-    db.setdefault("states", {}).setdefault("filter_panel", {})[_session_key(user_id)] = {
+    set_state(db, "filter_panel", user_id, {
         "chat_id": int(chat_id),
         "message_id": int(message_id),
-    }
+    })
     mark_db_dirty()
 
 def _clear_filter_panel_session(db, user_id):
@@ -281,7 +281,7 @@ def _filter_error_for_action(action):
 
 async def _bot_can_do_filter_action(context, chat_id, action):
     try:
-        member = await context.bot.get_chat_member(chat_id, context.bot.id)
+        member = await get_chat_member_cached(context, chat_id, context.bot.id)
         if member.status not in (ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER):
             return False
         if action in ("delete", "warn", "kick", "mute", "temp_mute"):
@@ -296,7 +296,7 @@ async def _bot_can_do_filter_action(context, chat_id, action):
 
 async def _bot_can_delete(context, chat_id):
     try:
-        member = await context.bot.get_chat_member(chat_id, context.bot.id)
+        member = await get_chat_member_cached(context, chat_id, context.bot.id)
         return member.status == ChatMemberStatus.OWNER or (
             member.status == ChatMemberStatus.ADMINISTRATOR and bool(getattr(member, "can_delete_messages", False))
         )
@@ -533,7 +533,7 @@ async def handle_filter_messages(update: Update, context: ContextTypes.DEFAULT_T
         return
 
     try:
-        live = await context.bot.get_chat_member(chat_id, user.id)
+        live = await get_chat_member_cached(context, chat_id, user.id)
         if live.status in (ChatMemberStatus.OWNER, ChatMemberStatus.ADMINISTRATOR):
             return
     except Exception:
@@ -637,6 +637,26 @@ async def handle_filter_text_commands(update: Update, context: ContextTypes.DEFA
     cid = update.effective_chat.id
     uid = update.effective_user.id
 
+    # Filter commands are handled in this early handler, so apply the anti-spam
+    # guard here; other commands are guarded once by handle_messages().
+    filter_command_like = cmd.startswith(("فیلتر", "ثبت فیلتر", "تنظیم فیلتر", "حذف فیلتر", "پاکسازی لیست فیلتر", "گودی فیلتر"))
+    if filter_command_like:
+        blocked, first_warning = command_spam_guard(cid, uid, text)
+        if blocked:
+            if first_warning:
+                try:
+                    await update.message.reply_text(
+                        f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> لطفاً دستورات را پشت‌سرهم ارسال نکنید.</b>',
+                        parse_mode=ParseMode.HTML
+                    )
+                except Exception:
+                    pass
+            try:
+                await update.message.delete()
+            except Exception:
+                pass
+            raise ApplicationHandlerStop()
+
     # Do not consume /done; the existing CommandHandler handles it.
     if cmd.startswith("/"):
         return
@@ -666,8 +686,14 @@ async def handle_filter_text_commands(update: Update, context: ContextTypes.DEFA
 
     if cmd in cleanup_cmds:
         g = get_group_data(db, cid)
+        if not _filter_words(g):
+            await update.message.reply_text(
+                f'<b><tg-emoji emoji-id="{CHECK_CUSTOM_EMOJI_ID}">✔️</tg-emoji> لیست فیلتر از قبل خالی می‌باشد.</b>',
+                parse_mode=ParseMode.HTML
+            )
+            raise ApplicationHandlerStop()
         states = db.setdefault("states", {})
-        states.setdefault("filter_cleanup", {})[str(uid)] = {"chat_id": cid, "message_id": None}
+        set_state(db, "filter_cleanup", uid, {"chat_id": cid, "message_id": None})
         kb = InlineKeyboardMarkup([[
             InlineKeyboardButton("بله", callback_data=f"filter_cleanup_cmd_do:{cid}", style="success", icon_custom_emoji_id=CHECK_CUSTOM_EMOJI_ID),
             InlineKeyboardButton("بستن", callback_data=f"filter_cleanup_cmd_close:{cid}", style="danger", icon_custom_emoji_id=CROSS_CUSTOM_EMOJI_ID)
@@ -824,14 +850,14 @@ async def handle_filter_callback(query, context, db):
             )
             return True
         states = db.setdefault("states", {})
-        states.setdefault("filter_add", {})[str(user_id)] = {
+        set_state(db, "filter_add", user_id, {
             "chat_id": cid,
             "panel_message_id": query.message.message_id,
             "punishment": action,
             "duration_minutes": 30,
             "message_ids": [],
             "words_added": 0
-        }
+        })
         if action == "temp_mute":
             await query.message.edit_text(
                 "<b>مدت سکوت موقت را مشخص کنید:</b>",
@@ -887,10 +913,10 @@ async def handle_filter_callback(query, context, db):
         if not await _owns_filter_panel(query, context, db, cid):
             return True
         states = db.setdefault("states", {})
-        states.setdefault("filter_delete", {})[str(user_id)] = {
+        set_state(db, "filter_delete", user_id, {
             "chat_id": cid,
             "panel_message_id": query.message.message_id
-        }
+        })
         await query.message.edit_text(
             f'<b><tg-emoji emoji-id="{FILTER_WARN_EMOJI}">❗️</tg-emoji> لطفا کلمه‌ای را که میخواهید از لیست فیلتر حذف شود ارسال کنید.</b>',
             reply_markup=InlineKeyboardMarkup([
@@ -913,6 +939,14 @@ async def handle_filter_callback(query, context, db):
 
     if parts[0] == "filter_cleanup_confirm":
         if not await _owns_filter_panel(query, context, db, cid):
+            return True
+        g = get_group_data(db, cid)
+        if not _filter_words(g):
+            await query.message.edit_text(
+                f'<b><tg-emoji emoji-id="{CHECK_CUSTOM_EMOJI_ID}">✔️</tg-emoji> لیست فیلتر از قبل خالی می‌باشد.</b>',
+                reply_markup=None, parse_mode=ParseMode.HTML
+            )
+            await query.answer()
             return True
         await query.message.edit_text(
             "<b>آیا از پاکسازی کامل لیست فیلتر مطمئن هستید؟</b>",
