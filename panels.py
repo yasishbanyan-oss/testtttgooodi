@@ -36,7 +36,8 @@ def get_owner_panel_content(db: dict) -> tuple[str, InlineKeyboardMarkup]:
         [InlineKeyboardButton(" مدیریت قابلیت ها", callback_data="panel_features", style="primary")],
         [InlineKeyboardButton(" پیام همگانی پیشرفته (Broadcast)", callback_data="panel_bcast_type_select", style="primary")],
         [InlineKeyboardButton(f" پیام همگانی کاربران ({user_count})", callback_data="panel_user_broadcast", style="success")],
-        [InlineKeyboardButton(" ادمین لاگ", callback_data="panel_admin_logs", style="primary")]
+        [InlineKeyboardButton(" ادمین لاگ", callback_data="panel_admin_logs", style="primary")],
+        [InlineKeyboardButton(" بکاپ و ریستور دیتابیس", callback_data="panel_backup_restore", style="primary")]
     ]
     return text, InlineKeyboardMarkup(buttons)
 
