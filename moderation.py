@@ -58,13 +58,13 @@ def full_group_permissions():
 
 async def bot_can_restrict_members(context, chat_id: int) -> bool:
     try:
-        m = await context.bot.get_chat_member(chat_id, context.bot.id)
+        m = await get_chat_member_cached(context, chat_id, context.bot.id)
         return m.status == ChatMemberStatus.OWNER or (m.status == ChatMemberStatus.ADMINISTRATOR and bool(getattr(m, "can_restrict_members", False)))
     except Exception: return False
 
 async def bot_can_promote_members(context, chat_id: int) -> bool:
     try:
-        m = await context.bot.get_chat_member(chat_id, context.bot.id)
+        m = await get_chat_member_cached(context, chat_id, context.bot.id)
         return m.status == ChatMemberStatus.OWNER or (m.status == ChatMemberStatus.ADMINISTRATOR and bool(getattr(m, "can_promote_members", False)))
     except Exception: return False
 
