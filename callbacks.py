@@ -2009,6 +2009,27 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         )
         return
 
+    # DATABASE BACKUP / RESTORE
+    elif data == "panel_backup_restore":
+        await open_backup_menu(query, context)
+        return
+
+    elif data == "backup_now":
+        await backup_now_callback(query, context)
+        return
+
+    elif data == "backup_restore_start":
+        await backup_restore_start_callback(query, context)
+        return
+
+    elif data == "backup_restore_cancel":
+        await backup_restore_cancel_callback(query, context)
+        return
+
+    elif data == "backup_restore_back":
+        await backup_restore_back_callback(query, context)
+        return
+
     # OWNER MAIN PANEL ACTIONS
     elif data == "panel_owner_main":
         if int(user_id) != int(OWNER_ID):
