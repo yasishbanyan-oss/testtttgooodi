@@ -54,7 +54,9 @@ async def start_dwoz_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "p2_name": None,
             "board": [None] * 9,
             "turn": None,
-            "status": "waiting"
+            "status": "waiting",
+            "created_at": time.time(),
+            "updated_at": time.time()
         }
         mark_db_dirty()
         save_db()
