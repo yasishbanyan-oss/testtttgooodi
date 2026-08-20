@@ -60,6 +60,21 @@ async def command_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         start_group_msg = '<b>بله عزیزم؟ من تو گروهم آماده و حاضر! <tg-emoji emoji-id="5283268017025736027">🤨</tg-emoji></b>'
         await update.message.reply_text(start_group_msg, parse_mode=ParseMode.HTML)
 
+async def command_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message:
+        return
+    txt = (
+        '<b>سلام عزیزم به ربات من خوش اومدی! <tg-emoji emoji-id="5352750090974929602">😍</tg-emoji></b>\n\n'
+        '<b>از طریق دکمه‌های زیر میتونی کاملا با گودی که یه اژدها کوچولو هست آشنا بشی! <tg-emoji emoji-id="5884128023271182329">🐉</tg-emoji></b>'
+    )
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("راهنمای سرگرمی", callback_data="help_fun", style="primary", icon_custom_emoji_id="5415940089375106928"),
+         InlineKeyboardButton("راهنمای بی ادبی", callback_data="help_rude", style="primary", icon_custom_emoji_id="5832633418386513259")],
+        [InlineKeyboardButton("راهنمای کاربردی", callback_data="help_useful", style="primary", icon_custom_emoji_id="5830338333892418460"),
+         InlineKeyboardButton("راهنمای مدیریتی", callback_data="help_admin", style="primary", icon_custom_emoji_id="5803348359972393936")]
+    ])
+    await update.message.reply_text(txt, reply_markup=kb, parse_mode=ParseMode.HTML)
+
 async def command_owner_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
         return
@@ -78,6 +93,13 @@ async def command_owner_panel(update: Update, context: ContextTypes.DEFAULT_TYPE
         await send_owner_panel_message(update, context)
     except Exception:
         logger.exception("OWNER PANEL ERROR:")
+        try:
+            await update.message.reply_text(
+                f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> باز کردن پنل مالک کل ناموفق بود.</b>',
+                parse_mode=ParseMode.HTML
+            )
+        except Exception:
+            pass
 
 async def command_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
@@ -215,6 +237,25 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         raw_text = update.message.text or update.message.caption or ""
         clean_raw = raw_text.strip().lower()
         norm_text = normalize_text(raw_text)
+
+        # Built-in command anti-spam: the first burst is warned once; subsequent
+        # commands in the same burst are silently deleted.
+        if is_group and update.effective_user and not update.effective_user.is_bot:
+            blocked, first_warning = command_spam_guard(chat_id, user_id, raw_text)
+            if blocked:
+                if first_warning:
+                    try:
+                        await update.message.reply_text(
+                            f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> لطفاً دستورات را پشت‌سرهم ارسال نکنید.</b>',
+                            parse_mode=ParseMode.HTML
+                        )
+                    except Exception:
+                        pass
+                try:
+                    await update.message.delete()
+                except Exception:
+                    pass
+                return
         
         # --------------------------------------
         # USER CHECK COMMANDS (GLOBAL / NOT ADMIN-ONLY)
@@ -334,6 +375,18 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(panel_text, reply_markup=build_link_panel_keyboard(chat_id), parse_mode=ParseMode.HTML)
                 return 
 
+        # Owner panel is also available in private chat by text, in addition
+        # to the /panel command. Group "پنل" remains the group admin panel.
+        if not is_group and clean_raw in {"پنل مالک کل", "پنل مالک", "owner panel", "panel owner"}:
+            if int(user_id) == int(OWNER_ID):
+                await send_owner_panel_message(update, context)
+            else:
+                await update.message.reply_text(
+                    f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> این بخش فقط مخصوص مالک اصلی ربات است.</b>',
+                    parse_mode=ParseMode.HTML
+                )
+            return
+
         # --------------------------------------
         # GROUP CONFIGURATION / MANAGEMENT / WARN / MUTE / BAN
         # --------------------------------------
@@ -440,7 +493,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     live_owner = False
                     live_admin = False
                     try:
-                        live_member = await context.bot.get_chat_member(chat_id, uid)
+                        live_member = await get_chat_member_cached(context, chat_id, uid)
                         live_owner = live_member.status == ChatMemberStatus.OWNER
                         live_admin = live_member.status == ChatMemberStatus.ADMINISTRATOR
                         if getattr(live_member, "user", None):
@@ -647,6 +700,27 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if not await is_configured_group_manager(context, chat_id, user_id):
                     await update.message.reply_text(f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> شما دسترسی مدیریت این گروه را ندارید.</b>', parse_mode=ParseMode.HTML); return
                 lt = cleanup_cmds[cmd]
+                list_empty = False
+                if lt in ("owners", "admins", "special", "exempt"):
+                    list_empty = not bool((g_data.get("management", {}) or {}).get(lt, []) or [])
+                    # The primary owner is structural and is never considered
+                    # removable/empty for the owners list.
+                    if lt == "owners" and (g_data.get("management", {}) or {}).get("primary_owner_id"):
+                        list_empty = False
+                elif lt == "warns":
+                    list_empty = not bool(g_data.get("warnings", {}) or {})
+                elif lt == "muted":
+                    list_empty = not bool(g_data.get("muted_users", {}) or {})
+                elif lt == "banned":
+                    list_empty = not bool(g_data.get("banned_users", {}) or {})
+                if list_empty:
+                    cleanup_labels = {"owners":"مالکین","admins":"مدیران","special":"ویژه","exempt":"معاف","warns":"اخطارها","muted":"سکوت","banned":"بن"}
+                    cleanup_label = cleanup_labels.get(lt, "موردنظر")
+                    await update.message.reply_text(
+                        f'<b><tg-emoji emoji-id="{CHECK_CUSTOM_EMOJI_ID}">✔️</tg-emoji> لیست {cleanup_label} از قبل خالی می‌باشد.</b>',
+                        parse_mode=ParseMode.HTML
+                    )
+                    return
                 if lt == "owners" and not await is_primary_or_bot_owner_of_group(context, chat_id, g_data, user_id):
                     await update.message.reply_text(f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> فقط مالک اصلی گروه اجازه پاکسازی لیست مالکین را دارد.</b>', parse_mode=ParseMode.HTML); return
                 kb = InlineKeyboardMarkup([[
@@ -678,8 +752,16 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 db.setdefault("members", {})[str(uid)] = {"username": uname, "fullname": name}
                 warnings = g_data.setdefault("warnings", {})
                 item = warnings.setdefault(str(uid), {"count": 0, "username": uname, "fullname": name})
-                limit = max(1, min(20, int(s.get("count", 3))))
-                item["count"] = min(limit, int(item.get("count", 0)) + 1)
+                try:
+                    limit_raw = int(s.get("count", 3))
+                except (TypeError, ValueError):
+                    limit_raw = 3
+                limit = max(1, min(20, limit_raw))
+                try:
+                    current_count = int(item.get("count", 0))
+                except (TypeError, ValueError):
+                    current_count = 0
+                item["count"] = min(limit, max(0, current_count) + 1)
                 item["username"], item["fullname"] = uname, name
                 count = item["count"]
                 punishment = s.get("punishment")
@@ -755,7 +837,11 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await update.message.reply_text(f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> شما مدیر گروه نیستید و دسترسی به سیستم اخطار ندارید.</b>', parse_mode=ParseMode.HTML); return
                 rest = cmd[len(check_match):].strip(); uid, name, uname = await resolve_group_target(update, context, db, chat_id, rest)
                 if not uid: await update.message.reply_text('<b>روی کاربر ریپلای کنید یا آیدی/یوزرنیم او را وارد کنید.</b>', parse_mode=ParseMode.HTML); return
-                count = int(g_data.setdefault("warnings", {}).get(str(uid), {}).get("count", 0))
+                raw_count = g_data.setdefault("warnings", {}).get(str(uid), {}).get("count", 0)
+                try:
+                    count = max(0, int(raw_count))
+                except (TypeError, ValueError):
+                    count = 0
                 await update.message.reply_text(f'<b><tg-emoji emoji-id="{WARN_DONE_EMOJI}">💥</tg-emoji> › کاربر {get_user_mention(uid,name)}</b>\n\n<b>›› <tg-emoji emoji-id="{PREMIUM_WARN_COUNT_EMOJI}">😻</tg-emoji> تعداد اخطار های شما‌: {count}</b>', parse_mode=ParseMode.HTML); return
 
             # Ban / mute / unban / unmute commands.
@@ -826,7 +912,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # Also inspect Telegram's live role. This prevents trying to mute/ban
                 # a real group owner/admin when the bot's local management list is stale.
                 try:
-                    live_member = await context.bot.get_chat_member(chat_id, uid)
+                    live_member = await get_chat_member_cached(context, chat_id, uid)
                     if live_member.status == ChatMemberStatus.OWNER:
                         live_label = f"@{html.escape(uname.lstrip('@'))}" if uname else get_user_mention(uid, name)
                         await update.message.reply_text(
@@ -953,7 +1039,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                         if lock_action:
                             try:
-                                bot_member = await context.bot.get_chat_member(chat_id, context.bot.id)
+                                bot_member = await get_chat_member_cached(context, chat_id, context.bot.id)
                                 if bot_member.status not in (ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER):
                                     await update.message.reply_text(
                                         f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> ربات ادمین گروه نیست.</b>',
@@ -1234,13 +1320,15 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 del db["states"]["waiting_cooldown"][u_str]
                 try:
                     mins = int(fa_to_en_digits(raw_text.strip()))
+                    if mins < 0 or mins > 1440:
+                        raise ValueError("cooldown out of range")
                     db["cooldown_minutes"] = mins
                     mark_db_dirty()
                     save_db(force=True)
                     await update.message.reply_text(f" زمان محدودیت (Cooldown) به {mins} دقیقه تغییر یافت.")
                 except Exception:
                     await update.message.reply_text(
-                        f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> مقدار وارد شده نامعتبر است.</b>',
+                        f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> مقدار وارد شده نامعتبر است. عددی بین 0 تا 1440 دقیقه وارد کنید.</b>',
                         parse_mode=ParseMode.HTML
                     )
                 return
@@ -1279,7 +1367,32 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 query_word = raw_text.strip().lower()
                 g_data = get_group_data(db, target_cid)
                 m_logs = g_data.get("message_logs", [])
-                matches = [m for m in m_logs if query_word in m.get("text", "").lower()]
+                token_index = g_data.get("message_log_index", {}) or {}
+                by_id = g_data.get("message_log_by_id", {}) or {}
+                # Rebuild once for older databases or partially migrated data.
+                if m_logs and len(by_id) < len(m_logs):
+                    by_id = {str(item.get("message_id")): item for item in m_logs if item.get("message_id") is not None}
+                    token_index = {}
+                    for item in m_logs:
+                        for tok in set(normalize_text(item.get("text", "")).lower().split()):
+                            token_index.setdefault(tok, []).append(item.get("message_id"))
+                    g_data["message_log_by_id"] = by_id
+                    g_data["message_log_index"] = token_index
+                    mark_db_dirty()
+                query_tokens = set(normalize_text(query_word).lower().split())
+                candidate_ids = None
+                if query_tokens and token_index:
+                    buckets = [set(token_index.get(tok, [])) for tok in query_tokens]
+                    candidate_ids = set.intersection(*buckets) if all(buckets) else set()
+                if candidate_ids is not None and by_id:
+                    candidate_logs = [by_id.get(str(mid)) for mid in candidate_ids]
+                    matches = [m for m in candidate_logs if m and query_word in str(m.get("text", "")).lower()]
+                    matches.sort(key=lambda item: item.get("message_id", 0))
+                else:
+                    matches = [m for m in m_logs if query_word in str(m.get("text", "")).lower()]
+                total_matches = len(matches)
+                MAX_REPORT_RESULTS = 2000
+                report_matches = matches[:MAX_REPORT_RESULTS]
 
                 report_lines = [
                     "SEARCH REPORT",
@@ -1287,19 +1400,23 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"Group: {g_data.get('title', 'Unknown')}",
                     f"Chat ID: {target_cid}",
                     f"Query: {query_word}",
-                    f"Total Matched: {len(matches)}",
+                    f"Total Matched: {total_matches}",
+                    f"Included In Report: {len(report_matches)}",
                     "",
                     "RESULTS",
                     "======="
                 ]
 
-                for idx, m in enumerate(matches, 1):
+                for idx, m in enumerate(report_matches, 1):
                     report_lines.append(f"{idx}.")
                     report_lines.append(f"Message ID: {m['message_id']}")
                     report_lines.append(f"User: {m['user_name']}")
                     report_lines.append(f"User ID: {m['user_id']}")
                     report_lines.append(f"Date: {m['date']}")
-                    report_lines.append(f"Text: {m['text']}")
+                    report_text = str(m.get("text", ""))
+                    if len(report_text) > 2000:
+                        report_text = report_text[:2000] + "... [truncated]"
+                    report_lines.append(f"Text: {report_text}")
                     if m.get("media_type") != "text":
                         report_lines.append(f"Media Type: {m['media_type']}")
                         report_lines.append(f"File ID: {m.get('file_id')}")
@@ -1660,7 +1777,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             db.setdefault("members", {})[uid_str_target] = {"username": target_username, "fullname": target_name}
             record = get_group_user_record(db, target_cid, uid) if target_cid else {"first_joined_at": None, "ban_count": 0, "last_ban_at": None, "mute_count": 0, "last_mute_at": None}
             try:
-                member = await context.bot.get_chat_member(target_cid, uid)
+                member = await get_chat_member_cached(context, target_cid, uid)
                 status = member.status
             except Exception:
                 member = None; status = None
