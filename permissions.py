@@ -22,7 +22,7 @@ def is_primary_group_owner_id(g_data: dict, user_id: int) -> bool:
 async def is_actual_group_owner(context, chat_id: int, user_id: int) -> bool:
     """True only when Telegram currently reports this user as the owner of this exact group."""
     try:
-        member = await context.bot.get_chat_member(chat_id, int(user_id))
+        member = await get_chat_member_cached(context, chat_id, int(user_id))
         return member.status == ChatMemberStatus.OWNER
     except Exception:
         return False
@@ -49,7 +49,7 @@ async def is_configured_group_owner(context, chat_id: int, user_id: int) -> bool
     if (g.get("management", {}) or {}).get("configured"):
         return is_group_owner_id(g, user_id)
     try:
-        return (await context.bot.get_chat_member(chat_id, user_id)).status == ChatMemberStatus.OWNER
+        return (await get_chat_member_cached(context, chat_id, user_id)).status == ChatMemberStatus.OWNER
     except Exception: return False
 
 def _stored_user(db: dict, uid: int, name: str = "کاربر", username: str = "") -> dict:
@@ -60,7 +60,7 @@ async def is_admin_or_owner(context: ContextTypes.DEFAULT_TYPE, chat_id: int, us
     if int(user_id) == int(OWNER_ID):
         return True
     try:
-        member = await context.bot.get_chat_member(chat_id, user_id)
+        member = await get_chat_member_cached(context, chat_id, user_id)
         return member.status in [ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER]
     except Exception:
         return False
