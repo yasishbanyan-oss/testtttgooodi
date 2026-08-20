@@ -35,6 +35,28 @@ async def hourly_goh_khor_job(context: ContextTypes.DEFAULT_TYPE):
     mark_db_dirty()
     save_db(force=True)
 
+async def periodic_xo_cleanup_job(context: ContextTypes.DEFAULT_TYPE):
+    try:
+        db = load_db()
+        games = db.setdefault("xo_games", {})
+        now = time.time()
+        stale = []
+        for game_id, game in list(games.items()):
+            try:
+                created = float(game.get("created_at", game.get("updated_at", now)))
+                updated = float(game.get("updated_at", created))
+                if now - max(created, updated) > 6 * 3600:
+                    stale.append(game_id)
+            except Exception:
+                stale.append(game_id)
+        for game_id in stale:
+            games.pop(game_id, None)
+        if stale:
+            mark_db_dirty()
+            save_db()
+    except Exception:
+        logger.exception("XO cleanup job failed")
+
 async def periodic_group_reaction_job(context: ContextTypes.DEFAULT_TYPE):
     try:
         target_chat_id = context.job.chat_id
@@ -81,6 +103,14 @@ async def periodic_group_reaction_job(context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Error in periodic_group_reaction_job: {e}")
 
+async def periodic_state_cleanup_job(context: ContextTypes.DEFAULT_TYPE):
+    try:
+        db = load_db()
+        if cleanup_expired_states(db):
+            save_db()
+    except Exception:
+        logger.exception("State cleanup job failed")
+
 def setup_chat_jobs(job_queue, active_chats: list):
     if not job_queue:
         return
@@ -96,6 +126,14 @@ def setup_chat_jobs(job_queue, active_chats: list):
 async def post_init(application: Application):
     db = load_db()
     setup_chat_jobs(application.job_queue, db.get("active_chats", []))
+    xo_cleanup_name = "xo_cleanup_global"
+    if not application.job_queue.get_jobs_by_name(xo_cleanup_name):
+        application.job_queue.run_repeating(periodic_xo_cleanup_job, interval=300, first=300, name=xo_cleanup_name)
+
+    state_cleanup_name = "state_cleanup_global"
+    if not application.job_queue.get_jobs_by_name(state_cleanup_name):
+        application.job_queue.run_repeating(periodic_state_cleanup_job, interval=300, first=300, name=state_cleanup_name)
+
     backup_job_name = "database_backup_15m"
     if not application.job_queue.get_jobs_by_name(backup_job_name):
         application.job_queue.run_repeating(
