@@ -2,10 +2,18 @@
 from core import *
 
 def get_owner_panel_content(db: dict) -> tuple[str, InlineKeyboardMarkup]:
-    user_count = len(db.get("started_users", {}))
-    group_count = len(db.get("active_chats", []))
-    banned_users_count = len(db.get("global_bans", {}))
-    banned_groups_count = len(db.get("global_group_bans", {}))
+    # Keep the owner panel resilient even if an older/restored database has
+    # one of these collections missing or stored as None.
+    def _safe_len(value, default=0):
+        try:
+            return len(value) if value is not None else default
+        except (TypeError, AttributeError):
+            return default
+
+    user_count = _safe_len(db.get("started_users", {}))
+    group_count = _safe_len(db.get("active_chats", []))
+    banned_users_count = _safe_len(db.get("global_bans", {}))
+    banned_groups_count = _safe_len(db.get("global_group_bans", {}))
 
     text = "<b>مالک محترم ربات \n\nبه پنل اصلی مدیریت ربات خوش آمدید. گزینه مورد نظر را انتخاب کنید:</b>"
     buttons = [
